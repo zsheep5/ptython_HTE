@@ -55,11 +55,9 @@ def render_html( pfile, ptype = 'file', pcontext = {}, preturn_type= 'string', p
     process_template(_template, pcontext, tag_tree)
 
 def process_template(ptemplate='', pcontext={}, ptag_tree=[], 
-                    poffset = 0,
                     pmisstag_text = 'Tag Name not Found in Context', 
                     pbranch_count=0, pbranch_limit=10):
     #handles the logic, matching up the context variables template tags and text replacement in the template
-    _offset = poffset
     _return = ptemplate
     _context_value= ''
     if pbranch_count == pbranch_limit:
@@ -68,36 +66,79 @@ def process_template(ptemplate='', pcontext={}, ptag_tree=[],
     for itag in ptag_tree:
         if itag.tag_type == 'TMPL_VAR':
             _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
-            _return = _return[0:itag.tag_sposition + _offset] + _context_value +  _return[itag.tag_eposition + _offset:]
-            _offset = _offset + ( ( itag.sposition - itag.tag_eposition ) + len(_context_value) ) 
+            _return =  _return.replace(itag.tag_raw, _context_value, 1)
         elif itag.tag_type == 'TMPL_IF':
-            ## eval the if condition if false see if child else or elseif
+            if not check_child_tree('/TMPL_IF', itag.tag_children):
+                    raise Exception('Template If statement does not have closing /TMPL_IF;  TMPL_IF position is: %s' % (itag.tag_sposition)) 
+            _start =  _return.find(itag.tag_raw)
+            _end = _return.find(find_child_tag('/TMPL_IF', None, itag.tag_children).tag_raw)+8
             _context_value == get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
             if _context_value == itag.tag_value :  ## process what is below or show text below this
-                if not check_child_tree('/TMPL_IF', itag.tag_children):
-                    raise Exception('Template If statement does not have closing /TMPL_IF;  TMPL_IF position is: %s' % (itag.tag_sposition)) 
                 if len(itag.tag_children)> 1:  #have children need to process them 
                     #remove the if statement tag from the templage
-                    _return = _return[0:itag.tag_sposition + _offset] + '' +  _return[itag.tag_eposition + _offset:] 
-                    _offset = _offset + ( (itag.sposition - itag.tag_eposition ) ) #new offset value
-                    itag.tag_children = remove_child_conditionals(_return, itag.tag_children, )
-                    _return, _offset = process_template( _return, 
+                    _return = _return.replace(itag.tag_raw, '' ,1)
+                    itag.tag_children = set_elseif_to_skip(itag.tag_children )
+                    _r = process_template( _return[_start:_end], 
                                                         pcontext, 
-                                                        itag.tag_children, 
-                                                        _offset, 
+                                                        itag.tag_children,  
                                                         pmisstag_text, 
                                                         (pbranch_count +1), 
                                                         pbranch_limit)
+                    _return = _return[0:_start] + _r + _return[_end:]
             elif check_child_tree('TMPL_ELSE', itag.tag_children) or check_child_tree('TMPL_ELSEIF', itag.tag_children):
                 ## remove text from start of if tag up to else or elseif
-                _return, _offset = process_template( _return, 
-                                                    pcontext, 
-                                                    itag.tag_children, 
-                                                    _offset, 
-                                                    pmisstag_text, 
-                                                    (pbranch_count +1), 
-                                                    pbranch_limit)
-        elif:
+                _ctag = find_child_tag(pchildren = itag.tag_children)
+                # idea here is to cut down the amount text being process in recursive calls 
+                _s2 = _return.find(_ctag.tag_raw-1)
+                _r = process_template( _return[_s2:_end], 
+                                            pcontext, 
+                                            itag.tag_children, 
+                                            pmisstag_text, 
+                                            (pbranch_count +1), 
+                                            pbranch_limit)
+                ## replace the text in the template
+                _return = _return[0:_start] + _r + _return[_end:]
+            else:
+                ## no else or elseif to process and the logic returned NONE remove the text for between the TMPL_IF to the /TMPL_IF
+                _return = _return[0:_start] + '' + _return[_end:]
+        elif itag.tag_type == 'TMPL_ELSEIF' :
+            if itag.tag_skip: #remove this from template up to the next elesif, else, /TMPL_IF
+                _return = _return[ 0:_return.find(itag.tag_raw)] + '' + \
+                          _return[ _return.find(find_child_tag(('TMPL_ELSEIF','TMPL_ELSE', '/TMPL_IF'), ptag_tree).tag_raw)-1:]
+                return _return 
+            _start =  _return.find(itag.tag_raw)
+            _end = _return.find(find_child_tag('/TMPL_IF', None, itag.tag_children).tag_raw)+8
+            _context_value == get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
+            if itag.value == _context_value:
+                _r = process_template( _return[_s2:_end], 
+                                            pcontext, 
+                                            itag.tag_children, 
+                                            pmisstag_text, 
+                                            (pbranch_count +1), 
+                                            pbranch_limit)
+                ## replace the text in the template
+                _return = _return[0:_start] + _r + _return[_end:]
+        elif itag.tag_type == 'TMPL_LOOP':
+            ## now in a loop conidition need to check a few things
+            if not check_child_tree('/TMP_LOOP', itag.tag_children):
+                raise Exception("LOOP is missing an /TMP_LOOP TAG.  TMPL_LOOP position is %s"% (itag.tag_sposition))
+            loop_context = pcontext.get(itag.tag_name, None)
+            _start =  _return.find(itag.tag_raw)
+            _end = _return.find(find_child_tag('/TMPL_LOOP', None, itag.tag_children).tag_raw)+11
+            if loop_context is None:  ##failed to find the LIST of dictionariares in the context replace with pmisstag_text
+               _return = _return[0:_start] + pmisstag_text + _return[_end:]
+               return _return
+            if not isinstance(loop_context, list):
+                raise Exception("LOOP name: %s at position %s the context is not a list" % (itag.tag_name, itag.tag_sposition))
+            _append_loop_text = ''
+            for iloop in loop_context:
+                if not isinstance(iloop, dict):
+                    raise Exception("LOOP name: %s at position %s context is a list but is not dictionary" % (itag.tag_name, itag.tag_sposition))
+                process_template(_return[_start:_end],)
+
+        elif itag.tag_type == '/TMPL_IF' or itag.tag_type == '/TMPL_LOOP' : ##this just removes the end tag for the templage
+            _return = _return.replace(itag.tag_raw, '')
+            
 
 
     return _return
@@ -105,13 +146,24 @@ def process_template(ptemplate='', pcontext={}, ptag_tree=[],
 def set_elseif_to_skip( ptag_tree=[] ):
     to_process = ptag_tree
     for itag in to_process:
-        if itag.tag_type in ('TMPL_ELSE', 'TMPL_ELSEIF', ) and not _found :
+        if itag.tag_type in ('TMPL_ELSE', 'TMPL_ELSEIF' ):
            itag.tag_skip = True
         if itag.tage_type == '/TMPL_IF':
             _epurge = itag.tag_eposition
-            break
-    
-    
+            return True
+    return True
+
+def find_child_tag (ptag_type = ('TMPL_ELSE', 'TMPL_ELSEIF' ), pname = None, pchildren=[]):
+    for itag in pchildren :
+        if itag in ptag_type:
+            if pname is not None:
+                if itag.tag_name == pname:
+                    return itag
+                else :
+                    continue
+            return itag
+    return None
+        
 def get_context_value(pcontext ={}, pname='', pdefault = None, pmisstag_text = 'Tag Name not Found in Context'):
     _return = pcontext.get(pname, None)
     if _return is not None :
@@ -121,13 +173,11 @@ def get_context_value(pcontext ={}, pname='', pdefault = None, pmisstag_text = '
     if _return is None and pdefault is None :
         return pmisstag_text
 
-
 def check_child_tree(ptag_type, pchildren):
     for ichild in pchildren:
         if  ichild.tag_type == ptag_type :
             return True
     return False
-
 
 def parse_template( ptemplate, sposition=0):
 # parses the template making sure all the tags are correct if not returns an error
