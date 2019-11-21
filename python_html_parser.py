@@ -12,6 +12,7 @@ class Parse_Tree ():
     tag_sposition = -1
     tag_eposition = -1
     tag_function = None  #python function
+    tag_func_args = ''
     tag_include_file_name = None #if the template has an include line this should be the file 
     tag_default = ''  #default value for 
     tag_children = [] #tags that appear in below this tag typically in If or loops will have children
@@ -43,7 +44,7 @@ class Parse_Tree ():
 
 def render_html( pfile, ptype = 'file', pcontext = {}, preturn_type= 'string', 
                 pcustom_tags=(), pcustom_attributes=(), 
-                pmisstag_text= 'Tag Name not Found in Context', pbranch_limit=10 ):
+                pmisstag_text= 'Tag Name not Found in Context', pbranch_limit=10, pdebug_mode=False ):
     _template = None
 
     if ptype == 'file':
@@ -55,12 +56,17 @@ def render_html( pfile, ptype = 'file', pcontext = {}, preturn_type= 'string',
     else:
         _template = pfile
 
+    _template = process_include_files(ptemplate)
+
     _count, tag_tree =parse_template(_template)
-    process_tag_tree( pcontext, tag_tree)
+    process_tag_tree( pcontext, tag_tree, pmisstag_text, 0, pbranch_limit, pdebug_mode)
+
+def process_include_files(ptemplate = ''):
+
 
 def process_tag_tree(pcontext={}, ptag_tree=[], 
                     pmisstag_text = 'Tag Name not Found in Context', 
-                    pbranch_count=0, pbranch_limit=10):
+                    pbranch_count=0, pbranch_limit=10, pdebug_mode=False):
     #handles the logic, matching up the context variables template tags and text replacement in the template
     _return = ''
     _context_value= ''
@@ -149,10 +155,12 @@ def process_tag_tree(pcontext={}, ptag_tree=[],
                 _return = _return + itag.tag_processed_string        
         elif itag.tag_type == 'TMPL_BREAK' or itag.tag_type== 'TMPL_CONTINUE':
             return _return, itag 
-        elif itag.tag_type == '/TMPL_IF' or itag.tag_type == '/TMPL_LOOP' : ##this just removes the end tag for the templage
-            _return = 
-            
-    return _return
+        elif itag.tag_type == '/TMPL_IF' or itag.tag_type == '/TMPL_LOOP' : ##this just removes the end tag for the template
+            _return = ''
+        elif itag.tag_type == '/TMPL_FUNCTION':
+            itag.tag_processed_string = function_process(itag.tag_name, itag.tag_func_args, pcontext, pmisstag_text, pdebug_mode)
+            _return = itag.tag_processed_string
+    return _return, itag
 
 def set_elseif_to_skip( ptag_tree=[] ):
     to_process = ptag_tree
@@ -241,8 +249,6 @@ def find_closing_tag(ptemplate='', sposition =0, p_otage_type = 'TMPL_IF', p_cta
     
     raise Exception("Closing Tag Mismatch for %s starting from position %s "%(p_otage_type, sposition))
         
-
-
 def tag_attributes_extract(pstring='', pattribute='name' ):
     _swhere = pstring.lower().find(pattribute.lower())
     _rstring = ''
@@ -336,6 +342,7 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_raw = ptemplate(_pt.tag_sposition, _pt.tag_eposition)
         _pt.tag_name = tag_attributes_extract(_pt.tag_raw, 'name')
         _pt.tag_default = tag_attributes_extract(_pt.tag_raw, 'value')
+        _pt.tag_func_args = tag_attributes_extract(_pt.tag_raw, 'args')
 
     elif ptemplate[sposition, 10].upper() == 'TMPL_LOOPCOUNT' :
         _pt.tag_type = 'TMPL_LOOPCOUNT'
@@ -353,6 +360,22 @@ def scan_tag(ptemplate= '', sposition=0):
 
     return sposition, _pt
 
+def function_process(pfunc_name = '', pargs='', pcontext= {}, pdefault_text ='Function not Found in Context', pdebug_mode=False ):
+    _func = pcontext.get(pfunc_name, None)
+    if _func is None:
+        return pdefault_text
+    
+    _pass_in =[]
+    for _iargs in pargs.split(','):
+        _pass_in.append(pcontext.get(_iargs))
+    
+    try:
+        _return = _func(*_pass_in)
+    except Exception as e:
+        if pdebug_mode:
+            raise 
+        _return = str(e)
+    return _return 
     
 
 def tag_list():
@@ -385,3 +408,6 @@ def tag_list():
        
     )
 
+
+def test_func(call):
+    pass
