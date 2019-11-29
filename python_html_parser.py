@@ -11,7 +11,7 @@ class Parse_Tree ():
     tag_value = None #used by if statments is the value compared against 
     tag_sposition = -1 #start of the caret  for the tag
     tag_eposition = -1 # ending carent close of the tag unless IF or LOOP then its the end of the caret for the closing tag 
-    tag_function = None  #python function
+    tag_function = ''  #python function
     tag_func_args = ''
     tag_include_file_name = None #if the template has an include line this should be the file 
     tag_default = ''  #default value for 
@@ -107,7 +107,7 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
 
     for itag in ptag_tree:
         if itag.tag_type == 'TMPL_VAR':
-            if itag.tag_function is None:
+            if itag.tag_function == '':
                 _return = _return.replace(itag.tag_raw, get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text ),1)
             else:
                 _return = _return.replace(itag.tag_raw, function_process(itag.tag_function, itag.tag_name, pcontext, itag.tag_default ), 1)
@@ -116,7 +116,7 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                     raise Exception('Template If statement does not have closing /TMPL_IF;  TMPL_IF position is: %s' % (itag.tag_sposition)) 
             _start =  _return.find(itag.tag_raw)
             _end = _return.find(find_child_tag('/TMPL_IF', None, itag.tag_children).tag_raw)+8
-            _context_value == get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
+            _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
             if _context_value == itag.tag_value :  ## process what is below or show text below this
                 if len(itag.tag_children)> 1:  #have children need to processed them 
 
@@ -134,11 +134,12 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                                                                     pmisstag_text, 
                                                                     (pbranch_count +1), 
                                                                     pbranch_limit)
-                if _break_or_continue is not None:
-                    return itag.tag_processed_string, _break_or_continue
-                _return = itag.tag_processed_string
+                if _break_or_continue is not None:  #hit a break event so exit this loop go back to calling function... 
+                    _return = _return.replace(itag.tag_raw, itag.tag_processed_string)
+                    return _return, _break_or_continue
             else:
                 itag.tag_processed_string = ''
+                _return = _return.replace(itag.tag_raw, itag.tag_processed_string)
         elif itag.tag_type == 'TMPL_ELSEIF' :
             if itag.tag_skip: #remove this from template up to the next elesif, else, /TMPL_IF
                 itag.tag_processed_string = ''
@@ -167,28 +168,28 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                 if not isinstance(iloop, dict):
                     raise Exception("LOOP name: %s at position %s context is a list, needs to be a Dictionary" % (itag.tag_name, itag.tag_sposition))
 
-                _append_loop_text, _break_or_continue = process_tag_tree(iloop, 
+                _hold_text, _break_or_continue = process_tag_tree(iloop, 
                                                 itag.tag_children, ptemplate[itag.tag_caret_close+1: itag.tag_eposition-12],
                                                 pmisstag_text, 
                                                 (pbranch_count +1), 
                                                 pbranch_limit)
-                _append_loop_text +=  _append_loop_text
+                _append_loop_text =  _append_loop_text + _hold_text
                 if _break_or_continue is not None:
                     if _break_or_continue.tag_type == 'TMPL_BREAK': 
                         if _break_or_continue.tag_name == '' or _break_or_continue.tag_name == itag.tag_name:
-                            # break this loop NOW
+                            _return + itag.tag_processed_string, _break_or_continue
                             break
                         else :
-                            # break out to the next loop level 
+                            # break out to higher function call 
                             return _return + itag.tag_processed_string, _break_or_continue
                     else:  ## has to be a continue
                         continue
-                _return = itag.tag_processed_string = ptemplate.replace(itag.tag_raw, _append_loop_text, 1 )        
+            _return = _return.replace(itag.tag_raw, _append_loop_text, 1 )        
         elif itag.tag_type == 'TMPL_BREAK' or itag.tag_type== 'TMPL_CONTINUE':
             return _return, itag 
         elif itag.tag_type == '/TMPL_IF' or itag.tag_type == '/TMPL_LOOP' : ##this just removes the end tag for the template
             return _return, itag
-        elif itag.tag_type == '/TMPL_FUNCTION':
+        elif itag.tag_type == 'TMPL_FUNCTION':
             itag.tag_processed_string = function_process(itag.tag_name, itag.tag_func_args, pcontext, pmisstag_text, pdebug_mode)
             _return = _return +  ptemplate.replace(itag.tag_raw, itag.tag_processed_string , 1)
     return _return, ptag_tree
@@ -215,13 +216,30 @@ def find_child_tag (ptag_type = ('TMPL_ELSE', 'TMPL_ELSEIF' ), pname = None, pch
     return None
         
 def get_context_value(pcontext ={}, pname='', pdefault = None, pmisstag_text = 'Tag Name not Found in Context'):
-    _return = pcontext.get(pname, None)
+
+    _dots = pname.split('.') #test to see if the name has dots in the name this dotnotation is being used access the child dictionary
+    if len(_dots) > 1 :
+        _tempcontext = pcontext.get(_dots[0])
+        _return = get_context_child_value(_tempcontext, _dots[1:])
+    else :
+        _return = pcontext.get(pname, None)
     if _return is not None :
         return str(_return)
-    if _return is None and pdefault is not None:
+    if pdefault is not None and pdefault is not '' :
         _return = pdefault
-    if _return is None and pdefault is None :
-        return pmisstag_text
+    return pmisstag_text
+
+def get_context_child_value(pcontext={}, pdots=''):
+    _tempcontext = pcontext.get(pdots[0])
+    if _tempcontext is None:
+        return None
+
+    if len(pdots)>1: #still have child(en) to sort through
+        _tempcontext = pcontext.get(pdots[0])
+        return get_context_child_value(_tempcontext, pdots[1:])
+    
+    return _tempcontext
+    
 
 def check_child_tree(ptag_type, pchildren):
     if pchildren is None:
@@ -286,24 +304,36 @@ def find_closing_tag(ptemplate='', sposition =0, p_otage_type = 'TMPL_IF', p_cta
         
 def tag_attributes_extract(pstring='', pattribute='name' ):
     _swhere = pstring.lower().find(pattribute.lower())
+    _offset = len(pattribute)
     _rstring = ''
     if _swhere >=0:
-        if pstring.count('"')%2 == 0 and pstring.count('"')> 0:
-            _s = pstring.find('"')+1
-            return pstring[_s: pstring.find('"', _s)]
-        elif pstring.count("'")%2 == 0 and pstring.count("'")>0:
-            _s = pstring.find("'")+1
-            return pstring[_s: pstring.find('"', _s)]
+        _cuts = pstring[_swhere+_offset:]
+        if _cuts.count('"')%2 == 0 and _cuts.count('"')> 0:
+            _s = _cuts.find('"')+1
+            return _cuts[_s: _cuts.find('"', _s)]
+        elif _cuts.count("'")%2 == 0 and _cuts.count("'")>0:
+            _s = _cuts.find("'")+1
+            return _cuts[_s: _cuts.find('"', _s)]
         else:
-            raise Exception(""" ' or " are not matching  in the attributes in for %s"""
+            raise Exception(""" ' or " are not matching  in the attributes for tag :  %s"""
                             % (pstring))
     return ''
 
-def tag_func_extract(pstring="<TMPL_FUNCTION function(list, of, args)>" ):
-    _step = pstring.upper().replace('<TMPL_FUNCTION', '', 1)
-    _step = _step.replace('>', '', 1)
+def tag_func_extract(pstring="function(list, of, args)" ):
+    _step = pstring
+    _inner_par =  _step.count('(')
+    _outer_par = _step.count(')')
+    _child_funcs = None
+    if _inner_par != _outer_par:  ## have syntax errors  
+        raise Exception("function tag has mismatched '(' ')' fix template") 
+        
+    if _inner_par > 1: #this has inner function to find and append as a child..
+        _func_name, _func_args, _child_funcs = tag_func_extract(_step[_step.find('(')+1 : _step.rfind(')')])
+        _child_funcs = Parse_Tree('TMPL_FUNCTION', ptag_name = _func_name, ptag_children=_child_funcs)
+        _child_funcs.tag_func_args = _func_args
     _func_name = _step.strip()[:_step.find('(')]
-    _func_ars = _step[_step.find('('): _step.find(')') ]
+    _func_args = ''
+    return _func_name, _func_args, _child_funcs
 
 def scan_tag(ptemplate= '', sposition=0):
     _pt = Parse_Tree()
@@ -352,8 +382,8 @@ def scan_tag(ptemplate= '', sposition=0):
     elif ptemplate[sposition:sposition+7].upper() == 'TMPL_IF' :
         _pt.tag_type = 'TMPL_IF'
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+7)
-        _pt.tag_name = tag_attributes_extract(ptemplate[sposition+9: _pt.tag_caret_close], 'name')
-        _pt.tag_value = tag_attributes_extract(_pt.tag_raw, 'value')
+        _pt.tag_name = tag_attributes_extract(ptemplate[sposition+7: _pt.tag_caret_close], 'name')
+        _pt.tag_value = tag_attributes_extract(ptemplate[sposition+7: _pt.tag_caret_close], 'value')
         _end_tag = find_closing_tag(ptemplate[sposition+7:])
         if _end_tag is None:
             raise Exception("TMP_IF is missing an /TMP_IF TAG.  TMPL_LOOP position is %s"% (_pt.tag_sposition))
@@ -365,19 +395,19 @@ def scan_tag(ptemplate= '', sposition=0):
 
     elif ptemplate[sposition:sposition+9].upper() == 'TMPL_ELSIF': 
         _pt.tag_type = 'TMPL_ELSEIF'
-        _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+7)
+        _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+11)
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_caret_close+1]
-        _pt.tag_name = tag_attributes_extract(_pt.tag_raw, 'name')
-        _pt.tag_value = tag_attributes_extract(_pt.tag_raw, 'value')
+        _pt.tag_name = tag_attributes_extract(ptemplate[sposition+11: _pt.tag_caret_close], 'name')
+        _pt.tag_value = tag_attributes_extract(ptemplate[sposition+11: _pt.tag_caret_close], 'value')
         _cposition, _pt.tag_children = parse_template(ptemplate, _pt.tag_caret_close)
         return cposition, _pt
 
     elif ptemplate[sposition:sposition+13].upper() == 'TMPL_FUNCTION': 
         _pt.tag_type = 'TMPL_FUNCTION'
-        _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+13)
+        _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+14)
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_caret_close+1]
-        _pt.tag_name, _pt.tag_func_args = tag_func_extract( _pt.tag_raw)
-        _pt.tag_default = tag_attributes_extract(_pt.tag_raw, 'default')
+        _pt.tag_name, _pt.tag_func_args, _pt.tag_children = tag_func_extract( _pt.tag_raw[14:_pt.tag_caret_close])
+        _pt.tag_default = tag_attributes_extract(_pt.tag_raw[14:_pt.tag_caret_close], 'default')
         return _pt.tag_caret_close+1, _pt
 
     elif ptemplate[sposition:sposition+10].upper() == 'TMPL_LOOPCOUNT' :
@@ -391,16 +421,26 @@ def scan_tag(ptemplate= '', sposition=0):
 
     return sposition, _pt
 
-def function_process(pfunc_name = '', pargs='', pcontext= {}, pdefault_text ='Function not Found in Context or is not a Built-In Function', pdebug_mode=False ):
+def function_process(pfunc_name = '', pargs='', pcontext= {}, pinner_funcs=None,
+                    pdefault_text ='Function not Found in Context or is not a Built-In Function', 
+                    pdebug_mode=False ):
     
     global function_context
+    _pass_in =[]
     _func = function_context.get(pfunc_name, None)
     if _func is None:
         return pdefault_text
     
-    _pass_in =[]
+    if pinner_funcs is not None:
+        _pass_in.append(function_process(pinner_funcs.tag_name, 
+                                    pinner_funcs.tag_func_args, 
+                                    pcontext,  
+                                    pinner_funcs.tag_children ))
+    
     for _iargs in pargs.split(','):
-        _pass_in.append(pcontext.get(_iargs))
+        if _iargs == '':
+            continue
+        _pass_in.append(get_context_value(pcontext, _iargs))
     
     try:
         _return = _func(*_pass_in)
@@ -450,7 +490,8 @@ def run_test_code():
             {"loopVar":"bool","loopVar2":True},
             {"loopVar":"float","loopVar2":'Unicode Test'} ],
         "sweet":{"name":"æ  ñ",
-                "price":None, "isBig": 44
+                "price":None, 
+                "isBig": 44
                 }
         }
     ascii_context = {"varName":"file template test",
@@ -458,7 +499,8 @@ def run_test_code():
             {"loopVar":"bool","loopVar2":False},
             {"loopVar":"float","loopVar2":98} ],
         "sweet":{"name":"it works with files",
-                "price":gg,"isBig": 0
+                "price":gg,
+                "isBig": 0
                 }
         }
 
@@ -471,9 +513,10 @@ def run_test_code():
     </TMPL_LOOP> 
     Sweet name: <TMPL_var name="sweet.name">
     Sweet price: <TMPL_var name="sweet.price">
-    <TMPL_if name="sweet.isBig" value="0">
+    <TMPL_if name="sweet.isBig" value="44">
     Sweet is big
-    </TMPL_IF>"""
+    </TMPL_IF>
+    <TMPL_FUNCTION str(len(sweet.isBig)) >"""
 
     print( render_html( test_template, 'string', utf_context ))
 
