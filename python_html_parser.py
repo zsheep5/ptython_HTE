@@ -28,7 +28,6 @@ class Parse_Tree ():
                 ptag_sposition=-1, 
                 ptag_eposition = -1,
                 ptag_caret_close=-1,
-
                 ptag_function= None,
                 ptag_include_file_name='',
                 ptag_default = '',
@@ -102,58 +101,74 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
     _return = ptemplate
     _context_value= ''
     _break_or_continue = None
+    _an_else_is= False
     if pbranch_count == pbranch_limit:
         raise Exception("Template Branch/Call Stack limit reached. current limit %s ")
+    
 
     for itag in ptag_tree:
-        if itag.tag_type == 'TMPL_VAR':
+        if itag.tag_skip == True:
+            _return = _return.replace(itag.tag_raw, '',1)
+            continue
+        elif itag.tag_type == 'TMPL_VAR' :
             if itag.tag_function == '':
                 _return = _return.replace(itag.tag_raw, get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text ),1)
             else:
                 _return = _return.replace(itag.tag_raw, function_process(itag.tag_function, itag.tag_name, pcontext, itag.tag_default ), 1)
         elif itag.tag_type == 'TMPL_IF':
-            if not check_child_tree('/TMPL_IF', itag.tag_children):
-                    raise Exception('Template If statement does not have closing /TMPL_IF;  TMPL_IF position is: %s' % (itag.tag_sposition)) 
             _start =  _return.find(itag.tag_raw)
             _end = _return.find(find_child_tag('/TMPL_IF', None, itag.tag_children).tag_raw)+8
             _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
             if _context_value == itag.tag_value :  ## process what is below or show text below this
-                if len(itag.tag_children)> 1:  #have children need to processed them 
-
-                    itag.tag_processed_string, _break_or_continue  = itag.tag_processed_string + process_tag_tree( 
-                                                                                                            pcontext, 
-                                                                                                            itag.tag_children,  
-                                                                                                            pmisstag_text, 
-                                                                                                            (pbranch_count +1), 
-                                                                                                            pbranch_limit)
-                    _return = _return.replace(itag.tag_raw, itag.tag_processed_string)
-            elif check_child_tree('TMPL_ELSE', itag.tag_children) or check_child_tree('TMPL_ELSEIF', itag.tag_children):
-                itag.tag_processed_string, _break_or_continue = process_tag_tree( 
-                                                                    pcontext, 
-                                                                    itag.tag_children, 
+                itag.tag_children = set_elseif_to_skip(itag.tag_children)
+            else:
+                itag.tag_children = set_if_children_to_skip(itag.tag_children) #need to process any elseif or else but do not process the template tags in the top if
+                itag.tag_processed_string = ''
+            if len(itag.tag_children)> 1:  #have children need to processed them as the related else and if on nested in this
+                itag.tag_processed_string, _break_or_continue  = process_tag_tree( pcontext, 
+                                                                    itag.tag_children,
+                                                                    ptemplate[itag.tag_caret_close+1: itag.tag_eposition-10],  
                                                                     pmisstag_text, 
                                                                     (pbranch_count +1), 
                                                                     pbranch_limit)
+                _return = _return.replace(itag.tag_raw, itag.tag_processed_string,1)
                 if _break_or_continue is not None:  #hit a break event so exit this loop go back to calling function... 
-                    _return = _return.replace(itag.tag_raw, itag.tag_processed_string)
                     return _return, _break_or_continue
             else:
-                itag.tag_processed_string = ''
-                _return = _return.replace(itag.tag_raw, itag.tag_processed_string)
-        elif itag.tag_type == 'TMPL_ELSEIF' :
-            if itag.tag_skip: #remove this from template up to the next elesif, else, /TMPL_IF
-                itag.tag_processed_string = ''
-            _context_value == get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
-            if itag.value == _context_value:
-                itag.tag_processed_string, _break_or_continue = process_tag_tree( 
-                                                                    pcontext, 
+                _return = _return.replace(itag.tag_raw, itag.tag_processed_string,1)
+        elif itag.tag_type == 'TMPL_ELSE' :
+            if _an_else_is==True :
+                _return = _return.replace(itag.tag_raw, '', 1)
+                continue
+            _an_else_is = True
+            itag.tag_processed_string, _break_or_continue  = process_tag_tree( 
+                                                            pcontext, 
+                                                            itag.tag_children,
+                                                            itag.tag_raw[itag.tag_raw.find('>')+1:],  
+                                                            pmisstag_text, 
+                                                            (pbranch_count +1), 
+                                                            pbranch_limit)
+            _return = _return.replace(itag.tag_raw, itag.tag_processed_string,1)
+            if _break_or_continue is not None:
+                return _return, _break_or_continue
+        elif itag.tag_type == 'TMPL_ELSEIF':
+            if _an_else_is==True :
+                _return = _return.replace(itag.tag_raw, '', 1)
+                continue
+            _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
+            if itag.tag_value == _context_value:
+                _an_else_is = True
+                itag.tag_processed_string, _break_or_continue = process_tag_tree( pcontext, 
                                                                     itag.tag_children, 
+                                                                    itag.tag_raw[itag.tag_raw.find('>')+1:],
                                                                     pmisstag_text, 
                                                                     (pbranch_count +1), 
                                                                     pbranch_limit)
+                _return = _return.replace(itag.tag_raw, itag.tag_processed_string, 1)
                 if _break_or_continue is not None:
-                    return itag.tag_processed_string, _break_or_continue
-        elif itag.tag_type == 'TMPL_LOOP':
+                    return _return, _break_or_continue
+
+        elif itag.tag_type == 'TMPL_LOOP' :
             ## now in a loop conidition need to check a few things
             if not check_child_tree('/TMPL_LOOP', itag.tag_children):
                 raise Exception("LOOP is missing an /TMP_LOOP TAG.  TMPL_LOOP position is %s"% (itag.tag_sposition))
@@ -169,7 +184,8 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                     raise Exception("LOOP name: %s at position %s context is a list, needs to be a Dictionary" % (itag.tag_name, itag.tag_sposition))
 
                 _hold_text, _break_or_continue = process_tag_tree(iloop, 
-                                                itag.tag_children, ptemplate[itag.tag_caret_close+1: itag.tag_eposition-12],
+                                                itag.tag_children, 
+                                                ptemplate[itag.tag_caret_close+1: itag.tag_eposition-12],
                                                 pmisstag_text, 
                                                 (pbranch_count +1), 
                                                 pbranch_limit)
@@ -187,22 +203,27 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
             _return = _return.replace(itag.tag_raw, _append_loop_text, 1 )        
         elif itag.tag_type == 'TMPL_BREAK' or itag.tag_type== 'TMPL_CONTINUE':
             return _return, itag 
-        elif itag.tag_type == '/TMPL_IF' or itag.tag_type == '/TMPL_LOOP' : ##this just removes the end tag for the template
-            return _return, itag
+        
         elif itag.tag_type == 'TMPL_FUNCTION':
-            itag.tag_processed_string = function_process(itag.tag_name, itag.tag_func_args, pcontext, pmisstag_text, pdebug_mode)
-            _return = _return +  ptemplate.replace(itag.tag_raw, itag.tag_processed_string , 1)
-    return _return, ptag_tree
+            itag.tag_processed_string = str(function_process(itag.tag_name, itag.tag_func_args, pcontext, 
+                                                pdefault_text=pmisstag_text, pdebug_mode=pdebug_mode))
+            _return = _return.replace(itag.tag_raw, itag.tag_processed_string , 1)
+    return _return, None
 
 def set_elseif_to_skip( ptag_tree=[] ):
-    to_process = ptag_tree
-    for itag in to_process:
+    for itag in ptag_tree:
         if itag.tag_type in ('TMPL_ELSE', 'TMPL_ELSEIF' ):
            itag.tag_skip = True
-        if itag.tage_type == '/TMPL_IF':
+        if itag.tag_type == '/TMPL_IF':
             _epurge = itag.tag_caret_close
-            return True
-    return True
+            return ptag_tree
+    return ptag_tree
+
+def set_if_children_to_skip( ptag_tree=[] ):
+    for itag in ptag_tree:
+        if itag.tag_type in ('TMPL_VAR', 'TMPL_LOOP', 'TMPL_FUNCTION', 'TMPL_IF' ):
+           itag.tag_skip = True
+    return ptag_tree
 
 def find_child_tag (ptag_type = ('TMPL_ELSE', 'TMPL_ELSEIF' ), pname = None, pchildren=[]):
     for itag in pchildren :
@@ -239,7 +260,6 @@ def get_context_child_value(pcontext={}, pdots=''):
         return get_context_child_value(_tempcontext, pdots[1:])
     
     return _tempcontext
-    
 
 def check_child_tree(ptag_type, pchildren):
     if pchildren is None:
@@ -267,18 +287,19 @@ def parse_template( ptemplate, sposition=0):
 def find_closing_caret(ptemplate='', sposition =0, p_tag_type = 'TMPL_VAR', pmax_search= 500):
     _count = sposition
     _len = len(ptemplate)
+    _search_limit = sposition+ pmax_search
     while _count < _len:
         _test = ptemplate[_count] 
         if _test == '>':
             return _count
-        if _count > pmax_search:
+        if _count > _search_limit:
             raise Exception("Failed to find the closing > after %s characters search for %s position %s " %
                         (pmax_search, p_tag_type, sposition) ) 
         _count = _count + 1
     else:
         raise Exception("Failed to find the closing > for  %s position %s "% (p_tag_type,sposition))
 
-def find_closing_tag(ptemplate='', sposition =0, p_otage_type = 'TMPL_IF', p_ctag_type = '/TMPL_IF'):
+def find_closing_tag(ptemplate='', sposition =0, p_otage_type = '<TMPL_IF', p_ctag_type = '/TMPL_IF'):
     ##searchs a string finding the closeing /TMPL_if returning its starting position in the string 
     ## the template passed can not have the opening tag for the if or loop
     
@@ -287,21 +308,48 @@ def find_closing_tag(ptemplate='', sposition =0, p_otage_type = 'TMPL_IF', p_cta
     _tag_size = len(p_otage_type)
     if _end_tag_count == 1:
         _end_tag_position = ptemplate.find(p_ctag_type)
-        return Parse_Tree(p_ctag_type, '', '', _end_tag_position, ptag_caret_close=find_closing_caret(ptemplate, _end_tag_position, '/TMPL_LOOP'), )
+        return Parse_Tree(p_ctag_type, '', '',-1, _end_tag_position, 
+                            ptag_caret_close=find_closing_caret(
+                                            ptemplate, _end_tag_position, 
+                                            p_ctag_type),
+                            )
     if _end_tag_count == 0:
         raise Exception("Cound not find the Closing tag for %s starting position %s" %(p_otage_type, sposition))
     _count = 0 
     _open_tag_position = 0
+    _end_tag_position = 0
     
-    while _count <_end_tag_count:
-        _end_tag_position = ptemplate.find(p_ctag_type, _open_tag_position)
+    while _count <=_end_tag_count:
+        _end_tag_position = ptemplate.find(p_ctag_type, _end_tag_position +_tag_size )
         _open_tag_position = ptemplate.find(p_otage_type, _open_tag_position+_tag_size)
-        if _end_tag_count < _open_tag_position: ## great found the closing tag return it
-            return Parse_Tree(p_ctag_type, '', '', _end_tag_position, find_closing_caret(ptemplate, _end_tag_position, '/TMPL_LOOP') )
+        if _end_tag_position < _open_tag_position or _open_tag_position ==-1: ## great found the closing tag return it
+            return Parse_Tree(p_ctag_type, '', '', -1, 
+                            _end_tag_position, 
+                            find_closing_caret(ptemplate, _end_tag_position, p_ctag_type) 
+                            )
         _count = _count + 1
     
     raise Exception("Closing Tag Mismatch for %s starting from position %s "%(p_otage_type, sposition))
+
+def find_sibling_tag_position ( ptemplate='', sposition =0, p_otage_type = '<TMPL_IF', p_stag_type = ('TMPL_ELSE', 'TMPL_ELSEIF' )):
+    #scan for the sibling tag in template
+    _closingif = ptemplate.count('/TMPL_IF')
+    _len = len(ptemplate)
+    _position = sposition
+    while _position < _len :
+        _otag_pos = ptemplate.find('<TMPL_IF', _position)
+        _stag_else = ptemplate.find('<TMPL_ELSE', _position)
         
+        if _otag_pos == -1 and _stag_else > 1 : # we do not have nested ifs to sort through to find our sibling
+            return _stag_else
+        elif _otag_pos == -1 and _stag_else == -1:
+            _position = ptemplate.find('/TMPL_IF', _position)
+            if _position ==-1:
+                return _len
+            return _position
+        else : # nested ifs jump to the end if end tag and rerun search 
+            _position = ptemplate.find('/TMPL_IF', _position)
+
 def tag_attributes_extract(pstring='', pattribute='name' ):
     _swhere = pstring.lower().find(pattribute.lower())
     _offset = len(pattribute)
@@ -331,8 +379,8 @@ def tag_func_extract(pstring="function(list, of, args)" ):
         _func_name, _func_args, _child_funcs = tag_func_extract(_step[_step.find('(')+1 : _step.rfind(')')])
         _child_funcs = Parse_Tree('TMPL_FUNCTION', ptag_name = _func_name, ptag_children=_child_funcs)
         _child_funcs.tag_func_args = _func_args
-    _func_name = _step.strip()[:_step.find('(')]
-    _func_args = ''
+    _func_name = _step.strip()[:_step.find('(')-1]
+    _func_args = _step[_step.find('(')+1 : _step.rfind(')')]
     return _func_name, _func_args, _child_funcs
 
 def scan_tag(ptemplate= '', sposition=0):
@@ -355,7 +403,7 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+9)
         _pt.tag_name = tag_attributes_extract(ptemplate[sposition+9: _pt.tag_caret_close], 'name')
         _pt.tag_default = tag_attributes_extract(_pt.tag_raw, 'default')
-        _end_tag = find_closing_tag(ptemplate[sposition+9:], 0, p_otage_type='TMPL_LOOP', p_ctag_type='/TMPL_LOOP' )
+        _end_tag = find_closing_tag(ptemplate[sposition+9:], 0, p_otage_type='<TMPL_LOOP', p_ctag_type='/TMPL_LOOP' )
         if _end_tag is None:
             raise Exception("LOOP is missing an /TMP_LOOP TAG.  TMPL_LOOP position is %s"% (_pt.tag_sposition))
         _pt.tag_eposition = _end_tag.tag_caret_close+sposition+10
@@ -381,26 +429,40 @@ def scan_tag(ptemplate= '', sposition=0):
 
     elif ptemplate[sposition:sposition+7].upper() == 'TMPL_IF' :
         _pt.tag_type = 'TMPL_IF'
-        _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+7)
+        _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+7, 'TMPL_IF')
         _pt.tag_name = tag_attributes_extract(ptemplate[sposition+7: _pt.tag_caret_close], 'name')
         _pt.tag_value = tag_attributes_extract(ptemplate[sposition+7: _pt.tag_caret_close], 'value')
         _end_tag = find_closing_tag(ptemplate[sposition+7:])
         if _end_tag is None:
             raise Exception("TMP_IF is missing an /TMP_IF TAG.  TMPL_LOOP position is %s"% (_pt.tag_sposition))
         _pt.tag_eposition = _end_tag.tag_caret_close+sposition+8
-        _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_eposition+1]
-        _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close: _pt.tag_eposition])
+        _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_eposition]
+        _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close: _pt.tag_eposition-10])
         _pt.tag_children.append(_end_tag)
         return _pt.tag_eposition, _pt
 
-    elif ptemplate[sposition:sposition+9].upper() == 'TMPL_ELSIF': 
+    elif ptemplate[sposition:sposition+11].upper() == 'TMPL_ELSEIF': 
         _pt.tag_type = 'TMPL_ELSEIF'
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+11)
-        _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_caret_close+1]
+        _pt.tag_eposition = _pt.tag_caret_close+sposition+12
         _pt.tag_name = tag_attributes_extract(ptemplate[sposition+11: _pt.tag_caret_close], 'name')
         _pt.tag_value = tag_attributes_extract(ptemplate[sposition+11: _pt.tag_caret_close], 'value')
-        _cposition, _pt.tag_children = parse_template(ptemplate, _pt.tag_caret_close)
-        return cposition, _pt
+        _stagpos = find_sibling_tag_position(ptemplate, sposition+11)
+        _pt.tag_raw = ptemplate[_pt.tag_sposition: _stagpos ]
+        _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close+1: _stagpos ], 0 )
+        
+        return _stagpos, _pt
+
+    elif ptemplate[sposition:sposition+9].upper() == 'TMPL_ELSE': 
+        _pt.tag_type = 'TMPL_ELSE'
+        _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+9)
+        _pt.tag_eposition = _pt.tag_caret_close+sposition+10
+        _pt.tag_name = tag_attributes_extract(ptemplate[sposition+9: _pt.tag_caret_close], 'name')
+        _pt.tag_value = tag_attributes_extract(ptemplate[sposition+9: _pt.tag_caret_close], 'value')
+        _stagpos = find_sibling_tag_position(ptemplate, sposition+9)
+        _pt.tag_raw = ptemplate[_pt.tag_sposition: _stagpos ]
+        _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close+1: _stagpos ], 0 )
+        return _stagpos, _pt
 
     elif ptemplate[sposition:sposition+13].upper() == 'TMPL_FUNCTION': 
         _pt.tag_type = 'TMPL_FUNCTION'
@@ -410,9 +472,9 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_default = tag_attributes_extract(_pt.tag_raw[14:_pt.tag_caret_close], 'default')
         return _pt.tag_caret_close+1, _pt
 
-    elif ptemplate[sposition:sposition+10].upper() == 'TMPL_LOOPCOUNT' :
+    elif ptemplate[sposition:sposition+14].upper() == 'TMPL_LOOPCOUNT' :
         _pt.tag_type = 'TMPL_LOOPCOUNT'
-        _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+13)
+        _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+15)
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_caret_close+1]
         return _pt.tag_caret_close+1, _pt
 
@@ -511,12 +573,30 @@ def run_test_code():
     file _Loop has var <TMPL_var name="loopVar"> 
         value <TMPL_var name="loopVar2"> 
     </TMPL_LOOP> 
-    Sweet name: <TMPL_var name="sweet.name">
-    Sweet price: <TMPL_var name="sweet.price">
-    <TMPL_if name="sweet.isBig" value="44">
-    Sweet is big
+        Sweet name: <TMPL_var name="sweet.name">
+        Sweet price: <TMPL_var name="sweet.price">
+    <TMPL_IF name="sweet.isBig" value="44">
+        Sweet is big
     </TMPL_IF>
-    <TMPL_FUNCTION str(len(sweet.isBig)) >"""
+
+    <TMPL_IF name="sweet.isBig" value="66">
+        test failed if Sweet is big
+        <TMPL_var name="sweet.price">
+    <TMPL_ELSEIF name="sweet.isBig" value="44">
+        test children
+        <TMPL_var name="sweet.price">
+        <TMPL_IF name="sweet.name" value="haha1" >
+            testing nested
+            <TMPL_IF name="sweet.name" value="haha1" >
+                test3 nested
+            </TMPL_IF>
+        </TMPL_IF>
+    <TMPL_ELSEIF name="sweet.isBig" value="77">
+      another test
+    <TMPL_ELSE name="sweet.isBig" value="44">
+    </TMPL_IF>
+
+    <TMPL_FUNCTION len(sweet.isBig) >"""
 
     print( render_html( test_template, 'string', utf_context ))
 
