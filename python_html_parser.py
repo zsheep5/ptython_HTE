@@ -1,5 +1,5 @@
 """
-A simple python HTML parser.  takes in file point or file name,
+A simple python HTML parser.  takes in file object, file name, or string
 context dictionary
 return type file or stinrg
 """
@@ -44,7 +44,6 @@ class Parse_Tree ():
         self.tag_children = ptag_children
         self.tag_raw = ptag_raw
          
-
 function_context = {'abs':abs, 'all':all, 'any':any, 'ascii':ascii, 'bin':bin,  'bytearray':bytearray, 'callable':callable, 
     'chr':chr, 'complex':complex,  'divmod':divmod,  'format':format, 'hash':hash, 'hex':hex, 'len':len, 'max':max, 'min':min,
     'oct':oct, 'ord':ord, 'pow':pow, 'round':round, 'str':str, }
@@ -57,14 +56,21 @@ def render_html( pfile, ptype = 'file', pcontext = {}, preturn_type= 'string',
                 pmisstag_text= 'Tag Name not Found in Context', 
                 pbranch_limit=10, pdebug_mode=False , pmax_search = 500,
                 pfunc_context={'func_name':'function'}, 
-                preturn_fname = 'rendered', preturn_fext='.html'):
+                preturn_fname = 'rendered', preturn_fext='.html',
+                puse_cache=False, pcache_path='', pcache_type='file'):
     _template = None
     global function_context
     function_context.update(pfunc_context)
+    #if puse_cache and os.f :
+    #    if pcache_type == 'file'
+    #        _template = open(pcache_path + 'cached.' + pfile).read()
+    #        if 
+            
     if ptype == 'file':
         import io
         if isinstance(pfile, io.IOBase):
-            _template = pfile 
+            pfile.seek(0) ##make sure start at the beginning 
+            _template = pfile.read()
         else :
             _template = open(pfile, 'r').read()
     else:
@@ -78,10 +84,13 @@ def render_html( pfile, ptype = 'file', pcontext = {}, preturn_type= 'string',
     if preturn_type == 'string':
         return _text
     elif preturn_type == 'file':
-        _t = open(preturn_fname + preturn_fext)
-        _t.write(_text)
-        _t.flush()
-        return _t
+        
+        return flush_template_to_disk (_text, pcache_path, preturn_fname, preturn_fext )
+        
+def flush_template_to_disk(ptemplate, pcache_path, preturn_fname, preturn_fext):
+    _t = open(pcache_path + preturn_fname + preturn_fext)
+    _t.write(ptemplate)
+    _t.flush()
 
 def process_include_files(ptemplate = '', ptag='<TMPL_INCLUDE', pmax_search =100 ):
     _newtemplate = ptemplate
@@ -90,7 +99,7 @@ def process_include_files(ptemplate = '', ptag='<TMPL_INCLUDE', pmax_search =100
         if _spos == -1:
             return _newtemplate
         _epos = find_closing_caret( _newtemplate, sposition = _spos, p_tag_type='TMPL_INCLUDE', pmax_search=pmax_search)
-        _filename = tag_attributes_extract(_newtemplate[_spos, _epos], 'name')
+        _filename = tag_attributes_extract(_newtemplate[_spos:_epos], 'name')
         _file = open(_filename,'r')
         _newtemplate = _newtemplate[0:_spos] + _file.read() + _newtemplate[_epos+1:]
 
@@ -99,13 +108,12 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                     pbranch_count=0, pbranch_limit=10, pdebug_mode=False):
     #handles the logic, matching up the context variables template tags and text replacement in the template
     _return = ptemplate
-    _context_value= ''
-    _break_or_continue = None
+    #_context_value= ''
+    #_break_or_continue = None
     _an_else_is= False
     if pbranch_count == pbranch_limit:
         raise Exception("Template Branch/Call Stack limit reached. current limit %s ")
     
-
     for itag in ptag_tree:
         if itag.tag_skip == True:
             _return = _return.replace(itag.tag_raw, '',1)
@@ -170,34 +178,37 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
 
         elif itag.tag_type == 'TMPL_LOOP' :
             ## now in a loop conidition need to check a few things
-            if not check_child_tree('/TMPL_LOOP', itag.tag_children):
-                raise Exception("LOOP is missing an /TMP_LOOP TAG.  TMPL_LOOP position is %s"% (itag.tag_sposition))
+            ##if not check_child_tree('/TMPL_LOOP', itag.tag_children):
+            ##    raise Exception("LOOP is missing an /TMP_LOOP TAG.  TMPL_LOOP position is %s"% (itag.tag_sposition))
             loop_context = pcontext.get(itag.tag_name, None)
             if loop_context is None:  ##failed to find the LIST of dictionariares in the context replace with pmisstag_text
                _return = _return.replace(itag.tag_raw, pmisstag_text, 1)
-               return _return
+               continue
             if not isinstance(loop_context, list):
                 raise Exception("LOOP name: %s at position %s the context is not a list" % (itag.tag_name, itag.tag_sposition))
             _append_loop_text = ''
+            _count = 0
+            _pass_text = ptemplate[itag.tag_caret_close+1: itag.tag_eposition-12]
+            _pass_bc = pbranch_count +1
             for iloop in loop_context:
-                if not isinstance(iloop, dict):
-                    raise Exception("LOOP name: %s at position %s context is a list, needs to be a Dictionary" % (itag.tag_name, itag.tag_sposition))
-
-                _hold_text, _break_or_continue = process_tag_tree(iloop, 
+                _count = _count + 1
+                #if not isinstance(iloop, dict):
+                #    raise Exception("LOOP name: %s at position %s context is a list, needs to be a Dictionary" % (itag.tag_name, itag.tag_sposition))
+                iloop.update({'TMP_LOOPCOUNT':_count})    
+                _result = process_tag_tree(iloop, 
                                                 itag.tag_children, 
-                                                ptemplate[itag.tag_caret_close+1: itag.tag_eposition-12],
+                                                _pass_text,
                                                 pmisstag_text, 
-                                                (pbranch_count +1), 
+                                                _pass_bc, 
                                                 pbranch_limit)
-                _append_loop_text =  _append_loop_text + _hold_text
-                if _break_or_continue is not None:
-                    if _break_or_continue.tag_type == 'TMPL_BREAK': 
-                        if _break_or_continue.tag_name == '' or _break_or_continue.tag_name == itag.tag_name:
-                            _return + itag.tag_processed_string, _break_or_continue
+                _append_loop_text +=  _result[0]
+                if _result[1] is not None:
+                    if  _result[1].tag_type == 'TMPL_BREAK': 
+                        if  _result[1].tag_name == '' or  _result[1].tag_name == itag.tag_name:
                             break
                         else :
                             # break out to higher function call 
-                            return _return + itag.tag_processed_string, _break_or_continue
+                            return _return.replace(itag.tag_raw, _append_loop_text, 1 ),  _result[1]
                     else:  ## has to be a continue
                         continue
             _return = _return.replace(itag.tag_raw, _append_loop_text, 1 )        
@@ -236,19 +247,23 @@ def find_child_tag (ptag_type = ('TMPL_ELSE', 'TMPL_ELSEIF' ), pname = None, pch
             return itag
     return None
         
-def get_context_value(pcontext ={}, pname='', pdefault = None, pmisstag_text = 'Tag Name not Found in Context'):
+def get_context_value(pcontext ={}, pname='', pdefault = None, pmisstag_text = 'Tag Name {ContextName} not Found in Context'):
 
-    _dots = pname.split('.') #test to see if the name has dots in the name this dotnotation is being used access the child dictionary
-    if len(_dots) > 1 :
-        _tempcontext = pcontext.get(_dots[0])
-        _return = get_context_child_value(_tempcontext, _dots[1:])
-    else :
-        _return = pcontext.get(pname, None)
-    if _return is not None :
-        return str(_return)
-    if pdefault is not None and pdefault is not '' :
-        _return = pdefault
-    return pmisstag_text
+    try :
+        return str(pcontext[pname])
+    except:
+        _dots = pname.split('.') #test to see if the name has dots in the name this dotnotation is being used access the child dictionary
+        if len(_dots) > 1 :
+            _tempcontext = pcontext.get(_dots[0])
+            _return = get_context_child_value(_tempcontext, _dots[1:])
+        else :
+            _return = pcontext.get(pname, None)
+            #_return = pcontext[pname]
+        if _return is not None :
+            return str(_return)
+        if pdefault is not None and pdefault is not '' :
+            _return = pdefault
+        return pmisstag_text.format(ContextName=pname)
 
 def get_context_child_value(pcontext={}, pdots=''):
     _tempcontext = pcontext.get(pdots[0])
@@ -539,7 +554,6 @@ def tag_list():
         'TMPL_ELSE',
         '/TMPL_IF',
         'TMPL_FUNCTION',
-       
     )
 
 def run_test_code():
@@ -547,7 +561,12 @@ def run_test_code():
     import time , datetime 
     gg = time.localtime()
     gg = datetime.date.today()
-    utf_context = {"varName":"haha1",
+    context = build_test_context()
+    context.update({'aloop':loop_test_build()})
+    print( render_html( test_template(), 'string', context ))
+
+def build_test_context () :
+    return {"varName":"haha1",
         "aLoop":[
             {"loopVar":"bool","loopVar2":True},
             {"loopVar":"float","loopVar2":'Unicode Test'} ],
@@ -556,23 +575,54 @@ def run_test_code():
                 "isBig": 44
                 }
         }
-    ascii_context = {"varName":"file template test",
-        "aLoop":[
-            {"loopVar":"bool","loopVar2":False},
-            {"loopVar":"float","loopVar2":98} ],
-        "sweet":{"name":"it works with files",
-                "price":gg,
-                "isBig": 0
-                }
-        }
 
+def run_test_files():
+    import random
+    name= str(int(random.random()*100000)) + '.html'
+    dd = open(name, 'w')
+    dd.write(test_template())
+    dd2 = open('include_'+name, 'w')
+    dd2.write('get an include file: <TMPL_var name="file_include">' )
+    dd2.flush()
+    dd2.close()
+    dd.write('\n' + '<TMPL_INCLUDE name = "'+'include_'+name +'" >'  )
+    dd.flush()
+    dd.close()
+    context = build_test_context()
+    context.update({'aLoop':loop_test_build(1000000)})
+    context.update({'file_include':'include_'+name})
+    import datetime 
+    
+    _template = test_template2()
+    t= datetime.datetime.now()
+    _count, rtag_tree =parse_template(_template)
+    #return {'rtag_tree':rtag_tree, 'context':context}
+    print('Time to build parse tree %s'%( (datetime.datetime.now() - t)) )
+    t= datetime.datetime.now()
+    process_tag_tree(context, rtag_tree)
+    print('Time to render parse tree %s'%( (datetime.datetime.now() - t)) )
+#    return test
 
-    test_template = """ <* This is a comment *>
+def loop_test_build( psize = 50):
+    _list= []
+    import random
+    for i in range(psize):
+        _list.append({ 'row_count': i,
+                    'loopVar': random.random()*1000, 
+                    'loopVar2': random.choice([True, False, 'hiho', 'diped'])
+                    })
+    return _list
+
+def test_template ():
+    return """ <* This is a comment *>
     File var Name: <TMPL_var name="varName"> 
     <TMPL_LOOP name="aLoop"> 
+    <li><a href=
     file _Loop has var <TMPL_var name="loopVar"> 
         value <TMPL_var name="loopVar2"> 
+    </a></li>
     </TMPL_LOOP> 
+        rowcount: <TMPL_var name="sweet.name">
         Sweet name: <TMPL_var name="sweet.name">
         Sweet price: <TMPL_var name="sweet.price">
     <TMPL_IF name="sweet.isBig" value="44">
@@ -598,6 +648,22 @@ def run_test_code():
 
     <TMPL_FUNCTION len(sweet.isBig) >"""
 
-    print( render_html( test_template, 'string', utf_context ))
+def test_template2():
+    return """
+    <ul>
+        <TMPL_LOOP name="aLoop"> 
+            <li><a href=" <TMPL_var name="loopVar"> "
+            value <TMPL_var name="loopVar2"> 
+            </a></li>
+        </TMPL_LOOP> 
+    </ul>
 
-run_test_code()
+    """
+
+#dd = run_test_files()
+#import cProfile
+#g = {'process_tag_tree':process_tag_tree}
+#cProfile.runctx('process_tag_tree(context, rtag_tree)', globals=g, locals=dd)    
+#run_test_code()
+
+run_test_files()
