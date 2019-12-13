@@ -4,6 +4,14 @@ context dictionary
 return type file or stinrg
 """
 
+from pickle import dumps, loads
+from memcache import Client
+from datetime import datetime as dt 
+from datetime import timedelta as td
+import os 
+import io
+import re 
+
 class Parse_Tree ():
     #simple class to hold the structure of the tags parsed
     tag_type = None
@@ -57,51 +65,134 @@ def render_html( pfile, ptype = 'file', pcontext = {}, preturn_type= 'string',
                 pbranch_limit=10, pdebug_mode=False , pmax_search = 500,
                 pfunc_context={'func_name':'function'}, 
                 preturn_fname = 'rendered', preturn_fext='.html',
-                puse_cache=False, pcache_path='', pcache_type='file'):
+                puse_cache=False, pcache_path='', pcache_type='file', pcache_age=30):
     _template = None
+    rtag_tree = None
+    _count = 1
+    _rtext = ''
+    ctag_tree = None
     global function_context
     function_context.update(pfunc_context)
     #if puse_cache and os.f :
     #    if pcache_type == 'file'
     #        _template = open(pcache_path + 'cached.' + pfile).read()
     #        if 
-            
-    if ptype == 'file':
+
+    if puse_cache == True:
+        rtag_tree = cache_get_ptree(preturn_fname + preturn_fext, pcache_path, pcache_type, pcache_age)
+        _rtext = cache_get_rtemplate(preturn_fname + preturn_fext, pcache_path, pcache_type, pcache_age )
+        if _rtext != '' or _rtext is not None: ##the cache had a rendered template return that.
+                if isinstance(_rtext, io.IOBase) and preturn_type == 'file' :
+                    return _rtext
+                else:
+                    _rtext.read()  
+                
+    if ptype == 'file' :
         import io
         if isinstance(pfile, io.IOBase):
             pfile.seek(0) ##make sure start at the beginning 
             _template = pfile.read()
         else :
             _template = open(pfile, 'r').read()
-    else:
+    if ptype == 'string' :
         _template = pfile
 
+    _template = tags_to_upper(_template, ('TMPL_INCLUDE',) )
     _template = process_include_files(_template, pmax_search=pmax_search)
+    _template = tags_to_upper(_template, tag_list() )
+    if rtag_tree is None: ##the cache failed to find a rendered template but we found the parse_tree so parse it  
+        _count, rtag_tree =parse_template(_template)
 
-    _count, rtag_tree =parse_template(_template)
-    _text, ctag_tree = process_tag_tree( pcontext, rtag_tree, _template, pmisstag_text, 0, pbranch_limit, pdebug_mode)
+    _rtext, ctag_tree = process_tag_tree( pcontext, rtag_tree, _template, pmisstag_text, 0, pbranch_limit, pdebug_mode)
+
+    if puse_cache == True: 
+        cache_ptree(rtag_tree, preturn_fname , pcache_path, pcache_type, pcache_age)
+        cache_template(_rtext, preturn_fname + preturn_fext, pcache_path, pcache_type, pcache_age)
 
     if preturn_type == 'string':
-        return _text
+        return _rtext
     elif preturn_type == 'file':
-        
-        return flush_template_to_disk (_text, pcache_path, preturn_fname, preturn_fext )
-        
-def flush_template_to_disk(ptemplate, pcache_path, preturn_fname, preturn_fext):
-    _t = open(pcache_path + preturn_fname + preturn_fext)
+        return flush_template_to_disk (_rtext, pcache_path, preturn_fname, preturn_fext )
+
+def tags_to_upper(ptemplate='', tag_list=()):
+    r = ptemplate
+    for i in tag_list:
+        r = re.sub( i, i, r, flags=re.IGNORECASE)
+    return r
+
+def cache_ptree(p_ptree = None, pname='', pcache_path='', pcache_type='file', pcache_age=30 ):
+    if pcache_type == 'file':
+        flush_template_to_disk( dumps(p_ptree), pcache_path, 'parse_tree_'+ pname, pcache_path, 'wb' )
+    elif pcache_type == 'memcache':
+        if isinstance(pcache_path, Client):
+            pcache_path.set(pname + "_" + str(dt.now()) , dumps(p_ptree) )
+    return True
+
+def cache_template(ptempl = '', pname='', pcache_path='', pcache_type='file', pcache_age=30):
+    if pcache_type == 'file':
+        flush_template_to_disk( ptempl, pcache_path, 'parse_tree_'+ pname, pcache_path )
+    elif pcache_type == 'memcache':
+        if isinstance(pcache_path, Client):
+            pcache_path.set(pname + "_" + pcache_age , dumps(ptempl), pcache_age )
+    return True
+
+def cache_get_ptree(pname='', pcache_path='', pcache_type='file', pcache_age=30):
+    if pcache_type == 'file':
+        _f = pcache_path + 'parse_tree_'+ pname, pcache_path
+        if  os.path.isfile(_f):
+            age = dt.fromtimestamp(os.path.getmtime(_f)) + td(pcache_age)
+            if dt.now() > age :
+                os.remove(_f)
+                return ''
+            else:
+                open(_f, pcache_path, 'rb' ).read()
+                return loads(open(_f, pcache_path, 'rb' ).read())
+        else: 
+            return None
+    elif pcache_type == 'memcache':
+        _f = pname+ "_" + pcache_age
+        if isinstance(pcache_path, Client):
+            return loads(pcache_path.get(pname + "_" + pcache_age ))
+    return None
+
+def cache_get_rtemplate(pname='', pcache_path='', pcache_type='file', pcache_age=30):
+    if pcache_type == 'file':
+        _f = pcache_path + pname+ "_" + pcache_age
+        if  os.path.isfile(_f):
+            age = dt.fromtimestamp(os.path.getmtime(_f)) + td(pcache_age)
+            if dt.now() > age :
+                os.remove(_f)
+                return ''
+            else:
+                return open (_f, pcache_path, 'r' )
+        else :
+            return ''
+    elif pcache_type == 'memcache':
+        _f = pname+ "_" + pcache_age
+        if isinstance(pcache_path, Client):
+            return pcache_path.get(pname + "_" + pcache_age )
+    return ''
+
+def flush_template_to_disk(ptemplate, pcache_path, preturn_fname, preturn_fext, pmode='w'):
+    _t = open(pcache_path + preturn_fname + preturn_fext, pmode,)
     _t.write(ptemplate)
     _t.flush()
+    _t.seek(0)
+    return _t
 
 def process_include_files(ptemplate = '', ptag='<TMPL_INCLUDE', pmax_search =100 ):
     _newtemplate = ptemplate
-    while True:
-        _spos = _newtemplate.upper().find('<TMPL_INCLUDE')
+    while True:  ##simply while loop that should catch all the includes even after new text is added in
+        _spos = _newtemplate.find('<TMPL_INCLUDE')
         if _spos == -1:
             return _newtemplate
         _epos = find_closing_caret( _newtemplate, sposition = _spos, p_tag_type='TMPL_INCLUDE', pmax_search=pmax_search)
         _filename = tag_attributes_extract(_newtemplate[_spos:_epos], 'name')
-        _file = open(_filename,'r')
-        _newtemplate = _newtemplate[0:_spos] + _file.read() + _newtemplate[_epos+1:]
+        try :
+            _ntext = open(_filename,'r').read()
+            _ntext = tags_to_upper(_ntext, ('TMPL_INCLUDE',)) ##fix up the tags to upper.. 
+        except Exception:
+            _newtemplate = _newtemplate[0:_spos] + "File Not Found" + _newtemplate[_epos+1:]
 
 def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                     pmisstag_text = 'Tag Name not Found in Context', 
@@ -125,14 +216,14 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                 _return = _return.replace(itag.tag_raw, function_process(itag.tag_function, itag.tag_name, pcontext, itag.tag_default ), 1)
         elif itag.tag_type == 'TMPL_IF':
             _start =  _return.find(itag.tag_raw)
-            _end = _return.find(find_child_tag('/TMPL_IF', None, itag.tag_children).tag_raw)+8
+            #_end = _return.find(find_child_tag('/TMPL_IF', None, itag.tag_children).tag_raw)+8
             _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
             if _context_value == itag.tag_value :  ## process what is below or show text below this
                 itag.tag_children = set_elseif_to_skip(itag.tag_children)
             else:
                 itag.tag_children = set_if_children_to_skip(itag.tag_children) #need to process any elseif or else but do not process the template tags in the top if
                 itag.tag_processed_string = ''
-            if len(itag.tag_children)> 1:  #have children need to processed them as the related else and if on nested in this
+            if len(itag.tag_children)>0:  #have children need to processed them as the related else and if on nested in this
                 itag.tag_processed_string, _break_or_continue  = process_tag_tree( pcontext, 
                                                                     itag.tag_children,
                                                                     ptemplate[itag.tag_caret_close+1: itag.tag_eposition-10],  
@@ -142,7 +233,7 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                 _return = _return.replace(itag.tag_raw, itag.tag_processed_string,1)
                 if _break_or_continue is not None:  #hit a break event so exit this loop go back to calling function... 
                     return _return, _break_or_continue
-            else:
+            else: ##no childrened processed should have processed at least the /TMP_IF tag  this should never be executed
                 _return = _return.replace(itag.tag_raw, itag.tag_processed_string,1)
         elif itag.tag_type == 'TMPL_ELSE' :
             if _an_else_is==True :
@@ -175,7 +266,8 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                 _return = _return.replace(itag.tag_raw, itag.tag_processed_string, 1)
                 if _break_or_continue is not None:
                     return _return, _break_or_continue
-
+        elif itag.tag_type =='/TMPL_IF':
+            _return = _return.replace(itag.tag_raw, '',1)
         elif itag.tag_type == 'TMPL_LOOP' :
             ## now in a loop conidition need to check a few things
             ##if not check_child_tree('/TMPL_LOOP', itag.tag_children):
@@ -185,7 +277,8 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                _return = _return.replace(itag.tag_raw, pmisstag_text, 1)
                continue
             if not isinstance(loop_context, list):
-                raise Exception("LOOP name: %s at position %s the context is not a list" % (itag.tag_name, itag.tag_sposition))
+                e = "LOOP name: %s at position %s the context is not a list" % (itag.tag_name, itag.tag_sposition)
+                raise Exception(e)
             _append_loop_text = ''
             _count = 0
             _pass_text = ptemplate[itag.tag_caret_close+1: itag.tag_eposition-12]
@@ -255,7 +348,10 @@ def get_context_value(pcontext ={}, pname='', pdefault = None, pmisstag_text = '
         _dots = pname.split('.') #test to see if the name has dots in the name this dotnotation is being used access the child dictionary
         if len(_dots) > 1 :
             _tempcontext = pcontext.get(_dots[0])
-            _return = get_context_child_value(_tempcontext, _dots[1:])
+            if _tempcontext is not None:
+                _return = get_context_child_value(_tempcontext, _dots[1:])
+            else:
+                _return = None
         else :
             _return = pcontext.get(pname, None)
             #_return = pcontext[pname]
@@ -329,7 +425,8 @@ def find_closing_tag(ptemplate='', sposition =0, p_otage_type = '<TMPL_IF', p_ct
                                             p_ctag_type),
                             )
     if _end_tag_count == 0:
-        raise Exception("Cound not find the Closing tag for %s starting position %s" %(p_otage_type, sposition))
+        e = "Cound not find the Closing tag for %s starting from position %s of the template: ptemplate" %(p_otage_type, sposition, ptemplate )
+        raise Exception(e)
     _count = 0 
     _open_tag_position = 0
     _end_tag_position = 0
@@ -402,8 +499,8 @@ def scan_tag(ptemplate= '', sposition=0):
     _pt = Parse_Tree()
     _pt.tag_sposition = sposition-1 # scan 
     cposition = 0
-    test = ptemplate[sposition:sposition+8].upper()
-    if ptemplate[sposition:sposition+8].upper()== 'TMPL_VAR':
+    test = ptemplate[sposition:sposition+8]
+    if ptemplate[sposition:sposition+8]== 'TMPL_VAR':
         _pt.tag_type = 'TMPL_VAR'
         _count = sposition + 8
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition + 9)
@@ -413,7 +510,7 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_function = tag_attributes_extract(_pt.tag_raw, 'function')
         return _pt.tag_caret_close, _pt    
 
-    elif ptemplate[sposition:sposition+9].upper() == 'TMPL_LOOP' :
+    elif ptemplate[sposition:sposition+9] == 'TMPL_LOOP' :
         _pt.tag_type = 'TMPL_LOOP'
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+9)
         _pt.tag_name = tag_attributes_extract(ptemplate[sposition+9: _pt.tag_caret_close], 'name')
@@ -427,7 +524,7 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_children.append(_end_tag)
         return _pt.tag_eposition , _pt
 
-    elif ptemplate[sposition:sposition+10].upper() == 'TMPL_BREAK': 
+    elif ptemplate[sposition:sposition+10] == 'TMPL_BREAK': 
         _pt.tag_type = 'TMPL_BREAK'
         
         _pt.tag_caret_close =find_closing_caret(ptemplate, sposition+ 10)
@@ -435,14 +532,14 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_name = tag_attributes_extract(_pt.tag_raw, 'name')
         return _pt.tag_caret_close, _pt
 
-    elif ptemplate[sposition:sposition+13].upper() == 'TMPL_CONTINUE': 
+    elif ptemplate[sposition:sposition+13] == 'TMPL_CONTINUE': 
         _pt.tag_type = 'TMPL_CONTINUE'
         _pt.tag_caret_close =find_closing_caret(ptemplate, sposition+ 13)
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_caret_close+1]
         _pt.tag_name = tag_attributes_extract(_pt.tag_raw, 'name')
         return _pt.tag_caret_close, _pt
 
-    elif ptemplate[sposition:sposition+7].upper() == 'TMPL_IF' :
+    elif ptemplate[sposition:sposition+7] == 'TMPL_IF' :
         _pt.tag_type = 'TMPL_IF'
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+7, 'TMPL_IF')
         _pt.tag_name = tag_attributes_extract(ptemplate[sposition+7: _pt.tag_caret_close], 'name')
@@ -453,10 +550,11 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_eposition = _end_tag.tag_caret_close+sposition+8
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_eposition]
         _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close: _pt.tag_eposition-10])
+        _end_tag.tag_raw = '</TMPL_IF>' 
         _pt.tag_children.append(_end_tag)
         return _pt.tag_eposition, _pt
 
-    elif ptemplate[sposition:sposition+11].upper() == 'TMPL_ELSEIF': 
+    elif ptemplate[sposition:sposition+11] == 'TMPL_ELSEIF': 
         _pt.tag_type = 'TMPL_ELSEIF'
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+11)
         _pt.tag_eposition = _pt.tag_caret_close+sposition+12
@@ -468,7 +566,7 @@ def scan_tag(ptemplate= '', sposition=0):
         
         return _stagpos, _pt
 
-    elif ptemplate[sposition:sposition+9].upper() == 'TMPL_ELSE': 
+    elif ptemplate[sposition:sposition+9] == 'TMPL_ELSE': 
         _pt.tag_type = 'TMPL_ELSE'
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+9)
         _pt.tag_eposition = _pt.tag_caret_close+sposition+10
@@ -479,7 +577,7 @@ def scan_tag(ptemplate= '', sposition=0):
         _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close+1: _stagpos ], 0 )
         return _stagpos, _pt
 
-    elif ptemplate[sposition:sposition+13].upper() == 'TMPL_FUNCTION': 
+    elif ptemplate[sposition:sposition+13] == 'TMPL_FUNCTION': 
         _pt.tag_type = 'TMPL_FUNCTION'
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+14)
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_caret_close+1]
@@ -487,7 +585,7 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_default = tag_attributes_extract(_pt.tag_raw[14:_pt.tag_caret_close], 'default')
         return _pt.tag_caret_close+1, _pt
 
-    elif ptemplate[sposition:sposition+14].upper() == 'TMPL_LOOPCOUNT' :
+    elif ptemplate[sposition:sposition+14] == 'TMPL_LOOPCOUNT' :
         _pt.tag_type = 'TMPL_LOOPCOUNT'
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+15)
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_caret_close+1]
@@ -526,7 +624,7 @@ def function_process(pfunc_name = '', pargs='', pcontext= {}, pinner_funcs=None,
             raise 
         _return = str(e)
     return _return 
-    
+ 
 def tag_list():
     """ <TMPL_VAR name = "varname" default = "value" function = "functionname">
     * <TMPL_INCLUDE name = "filename">
@@ -666,4 +764,4 @@ def test_template2():
 #cProfile.runctx('process_tag_tree(context, rtag_tree)', globals=g, locals=dd)    
 #run_test_code()
 
-run_test_files()
+#run_test_files()
