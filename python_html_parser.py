@@ -29,6 +29,7 @@ class Parse_Tree ():
     tag_processed_string = '' #contains the text after it has been processed by the template engine 
     tag_skip = False #tells processor to skip this tag primary used by if statements so else and elseif are not process just removed
     tag_caret_close = -1 # the closing caret for the tag  
+    tag_else_position = -1
 
     def __init__(self, ptag_type= 'TMPL_VAR', 
                 ptag_name='', 
@@ -220,13 +221,16 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
             _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
             if _context_value == itag.tag_value :  ## process what is below or show text below this
                 itag.tag_children = set_elseif_to_skip(itag.tag_children)
+                _to_pass = ptemplate[itag.tag_caret_close+1: itag.tag_eposition ]
             else:
                 itag.tag_children = set_if_children_to_skip(itag.tag_children) #need to process any elseif or else but do not process the template tags in the top if
                 itag.tag_processed_string = ''
+                _to_pass = ptemplate[itag.tag_else_position-1: itag.tag_eposition]
             if len(itag.tag_children)>0:  #have children need to processed them as the related else and if on nested in this
                 itag.tag_processed_string, _break_or_continue  = process_tag_tree( pcontext, 
                                                                     itag.tag_children,
-                                                                    ptemplate[itag.tag_caret_close+1: itag.tag_eposition-10],  
+                                                                    _to_pass,
+                                                                    #ptemplate[itag.tag_caret_close+1: itag.tag_eposition],  
                                                                     pmisstag_text, 
                                                                     (pbranch_count +1), 
                                                                     pbranch_limit)
@@ -552,6 +556,7 @@ def scan_tag(ptemplate= '', sposition=0):
         _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close: _pt.tag_eposition-10])
         _end_tag.tag_raw = '</TMPL_IF>' 
         _pt.tag_children.append(_end_tag)
+        _pt.tag_else_position = find_sibling_tag_position(ptemplate[sposition + 8: _pt.tag_eposition], 0) + 8 + sposition
         return _pt.tag_eposition, _pt
 
     elif ptemplate[sposition:sposition+11] == 'TMPL_ELSEIF': 
