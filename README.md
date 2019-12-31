@@ -8,16 +8,27 @@ Wanted a simple easy to use template engine, that was fast and easy to modify an
 Compare to other Python HTML template engines,  this is only 600 lines of code has all the same features that are found in other Engines. 
 
 The one file, python_html_parser.py supports the following Template Tags 
+
 'TMPL_VAR' = prints out variables in Context dictionary has default value , and function tag to first pass the variable through a function return that vale 
+
 'TMPL_LOOP' = loops over a list of dictionaries in the context
+
 'TMPL_BREAK' = breaks out of loop, can be a name loop to exit out of nested loops
+
 '/TMPL_LOOP', = end loop tage
+
 'TMPL_CONTINUE' = go to the next iteration of the loop
+
 'TMPL_LOOPCOUNT' =  automatically created variable  to track current number the loop is on starts at 0
+
 'TMPL_IF' = same a python if statement
+
 'TMPL_ELSIF' =  same as python elsif statement
+
 'TMPL_ELSE' = same as python else statement
+
 '/TMPL_IF' = end tag of if statement 
+
 'TMPL_FUNCTION' = call a function that is function_context dictionary,  a pointer to the function must be in the funciton_context Dictionary
 
 There are a few cache methods. 
