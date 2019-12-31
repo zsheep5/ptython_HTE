@@ -15,7 +15,7 @@ The one file, python_html_parser.py supports the following Template Tags
 
 'TMPL_BREAK' = breaks out of loop, can be a name loop to exit out of nested loops
 
-'/TMPL_LOOP', = end loop tage
+'/TMPL_LOOP', = end loop tag
 
 'TMPL_CONTINUE' = go to the next iteration of the loop
 
@@ -29,13 +29,13 @@ The one file, python_html_parser.py supports the following Template Tags
 
 '/TMPL_IF' = end tag of if statement 
 
-'TMPL_FUNCTION' = call a function that is function_context dictionary,  a pointer to the function must be in the funciton_context Dictionary
+'TMPL_FUNCTION' = call a function that is in the function_context dictionary,  a pointer to the function must be in the funciton_context Dictionary
 
 There are a few cache methods. 
 
-One cache the parsed template so the template does not have to be parsed to be rendered again  
+One cache method is to cache the parsed template so the template does not have to be re-parsed to be rendered again  
 
-Cache the rendered template, putting the results into memcache.
+Second cache method keeps therendered template putting the results into memcache.
 
 The template engine is written in function style,  meaning all the functions can be called independently of each other and out of sequence.  The only exception is the function_context dictionary is a global variable.
 
