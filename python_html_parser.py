@@ -30,6 +30,7 @@ class Parse_Tree ():
     tag_skip = False #tells processor to skip this tag primary used by if statements so else and elseif are not process just removed
     tag_caret_close = -1 # the closing caret for the tag  
     tag_else_position = -1
+    tag_notlogic = False
 
     def __init__(self, ptag_type= 'TMPL_VAR', 
                 ptag_name='', 
@@ -219,7 +220,11 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
             _start =  _return.find(itag.tag_raw)
             #_end = _return.find(find_child_tag('/TMPL_IF', None, itag.tag_children).tag_raw)+8
             _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
-            if _context_value == itag.tag_value :  ## process what is below or show text below this
+            _compare = get_context_value(pcontext, itag.tag_value, itag.tag_value,'' )
+            if _context_value == _compare and itag.tag_notlogic==False:  ## process what is below or show text below this
+                itag.tag_children = set_elseif_to_skip(itag.tag_children)
+                _to_pass = ptemplate[itag.tag_caret_close+1: itag.tag_eposition ]
+            elif _context_value != _compare and itag.tag_notlogic ==True :
                 itag.tag_children = set_elseif_to_skip(itag.tag_children)
                 _to_pass = ptemplate[itag.tag_caret_close+1: itag.tag_eposition ]
             else:
@@ -259,7 +264,19 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                 _return = _return.replace(itag.tag_raw, '', 1)
                 continue
             _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
-            if itag.tag_value == _context_value:
+            _compare = get_context_value(pcontext, itag.tag_value, itag.tag_value,'' )
+            if itag.tag_value == _compare and itag.tag_notlogic==False:
+                _an_else_is = True
+                itag.tag_processed_string, _break_or_continue = process_tag_tree( pcontext, 
+                                                                    itag.tag_children, 
+                                                                    itag.tag_raw[itag.tag_raw.find('>')+1:],
+                                                                    pmisstag_text, 
+                                                                    (pbranch_count +1), 
+                                                                    pbranch_limit)
+                _return = _return.replace(itag.tag_raw, itag.tag_processed_string, 1)
+                if _break_or_continue is not None:
+                    return _return, _break_or_continue
+            elif itag.tag_value != _compare and itag.tag_notlogic==True:
                 _an_else_is = True
                 itag.tag_processed_string, _break_or_continue = process_tag_tree( pcontext, 
                                                                     itag.tag_children, 
@@ -543,8 +560,10 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_name = tag_attributes_extract(_pt.tag_raw, 'name')
         return _pt.tag_caret_close, _pt
 
-    elif ptemplate[sposition:sposition+7] == 'TMPL_IF' :
+    elif ptemplate[sposition:sposition+7] == 'TMPL_IF' or ptemplate[sposition:sposition+8] == 'TMPL_NIF'  :
         _pt.tag_type = 'TMPL_IF'
+        if ptemplate[sposition:sposition+8] == 'TMPL_IF':
+            _pt.tag_notlogic = True
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+7, 'TMPL_IF')
         _pt.tag_name = tag_attributes_extract(ptemplate[sposition+7: _pt.tag_caret_close], 'name')
         _pt.tag_value = tag_attributes_extract(ptemplate[sposition+7: _pt.tag_caret_close], 'value')
@@ -559,8 +578,10 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_else_position = find_sibling_tag_position(ptemplate[sposition + 8: _pt.tag_eposition], 0) + 8 + sposition
         return _pt.tag_eposition, _pt
 
-    elif ptemplate[sposition:sposition+11] == 'TMPL_ELSEIF': 
+    elif ptemplate[sposition:sposition+11] == 'TMPL_ELSEIF' or ptemplate[sposition:sposition+12] == 'TMPL_NELSEIF': 
         _pt.tag_type = 'TMPL_ELSEIF'
+        if ptemplate[sposition:sposition+12] == 'TMPL_NELSEIF':
+            _pt.tag_notlogic = True
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+11)
         _pt.tag_eposition = _pt.tag_caret_close+sposition+12
         _pt.tag_name = tag_attributes_extract(ptemplate[sposition+11: _pt.tag_caret_close], 'name')
@@ -638,7 +659,8 @@ def tag_list():
     * <TMPL_CONTINUE name = N>
     * <TMP_LOOPCOUNT> returns the current count in a loop primary use is for conditional formating..
     * </TMPL_LOOP name = "" >
-    * <TMPL_IF name = "varname" value = "testvalue">
+    * <TMPL_IF name = "varname" value = "testvalue" >
+    * <TMPL_NIF name = "varname" value = "testvalue" >
     * <TMPL_ELSIF name = "varname" value = "testvalue">
     * <TMPL_ELSE>
     * </TMPL_IF>
