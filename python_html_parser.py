@@ -11,6 +11,7 @@ from datetime import timedelta as td
 import os 
 import io
 import re 
+import html
 
 class Parse_Tree ():
     #simple class to hold the structure of the tags parsed
@@ -30,7 +31,7 @@ class Parse_Tree ():
     tag_skip = False #tells processor to skip this tag primary used by if statements so else and elseif are not process just removed
     tag_caret_close = -1 # the closing caret for the tag  
     tag_else_position = -1
-    tag_notlogic = False
+    tag_logicoperator = 'equal'
 
     def __init__(self, ptag_type= 'TMPL_VAR', 
                 ptag_name='', 
@@ -196,6 +197,21 @@ def process_include_files(ptemplate = '', ptag='<TMPL_INCLUDE', pmax_search =100
         except Exception:
             _newtemplate = _newtemplate[0:_spos] + "File Not Found" + _newtemplate[_epos+1:]
 
+def logic_test(pleft, pright, poperator='equal' ):
+    if poperator=='equal':
+        return pleft == pright
+    elif poperator=='greater':
+        return pleft > pright
+    elif poperator=='egreater':
+        return pleft >= pright
+    elif poperator=='less':
+        return pleft < pright
+    elif poperator=='eless':
+        return pleft <= pright
+    elif poperator=='notequal':
+        return pleft != pright
+    raise Exception('Bad If logic')
+    
 def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                     pmisstag_text = 'Tag Name not Found in Context', 
                     pbranch_count=0, pbranch_limit=10, pdebug_mode=False):
@@ -205,7 +221,7 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
     #_break_or_continue = None
     _an_else_is= False
     if pbranch_count == pbranch_limit:
-        raise Exception("Template Branch/Call Stack limit reached. current limit %s ")
+        raise Exception(html.escape("Template Branch/Call Stack limit reached. current limit %s "%(pbranch_limit)))
     
     for itag in ptag_tree:
         if itag.tag_skip == True:
@@ -221,10 +237,7 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
             #_end = _return.find(find_child_tag('/TMPL_IF', None, itag.tag_children).tag_raw)+8
             _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
             _compare = get_context_value(pcontext, itag.tag_value, itag.tag_value,'' )
-            if _context_value == _compare and itag.tag_notlogic==False:  ## process what is below or show text below this
-                itag.tag_children = set_elseif_to_skip(itag.tag_children)
-                _to_pass = ptemplate[itag.tag_caret_close+1: itag.tag_eposition ]
-            elif _context_value != _compare and itag.tag_notlogic ==True :
+            if logic_test(_context_value, _compare, itag.tag_logicoperator) :  ## process what is below or show text below this
                 itag.tag_children = set_elseif_to_skip(itag.tag_children)
                 _to_pass = ptemplate[itag.tag_caret_close+1: itag.tag_eposition ]
             else:
@@ -265,18 +278,7 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                 continue
             _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
             _compare = get_context_value(pcontext, itag.tag_value, itag.tag_value,'' )
-            if itag.tag_value == _compare and itag.tag_notlogic==False:
-                _an_else_is = True
-                itag.tag_processed_string, _break_or_continue = process_tag_tree( pcontext, 
-                                                                    itag.tag_children, 
-                                                                    itag.tag_raw[itag.tag_raw.find('>')+1:],
-                                                                    pmisstag_text, 
-                                                                    (pbranch_count +1), 
-                                                                    pbranch_limit)
-                _return = _return.replace(itag.tag_raw, itag.tag_processed_string, 1)
-                if _break_or_continue is not None:
-                    return _return, _break_or_continue
-            elif itag.tag_value != _compare and itag.tag_notlogic==True:
+            if logic_test(_context_value, _compare, itag.tag_logicoperator):
                 _an_else_is = True
                 itag.tag_processed_string, _break_or_continue = process_tag_tree( pcontext, 
                                                                     itag.tag_children, 
@@ -298,7 +300,7 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                _return = _return.replace(itag.tag_raw, pmisstag_text, 1)
                continue
             if not isinstance(loop_context, list):
-                e = "LOOP name: %s at position %s the context is not a list" % (itag.tag_name, itag.tag_sposition)
+                e = html.escape("LOOP name: %s at position %s the context is not a list" % (itag.tag_name, itag.tag_sposition))
                 raise Exception(e)
             _append_loop_text = ''
             _count = 0
@@ -379,7 +381,7 @@ def get_context_value(pcontext ={}, pname='', pdefault = None, pmisstag_text = '
         if _return is not None :
             return str(_return)
         if pdefault is not None and pdefault is not '' :
-            _return = pdefault
+            return pdefault
         return pmisstag_text.format(ContextName=pname)
 
 def get_context_child_value(pcontext={}, pdots=''):
@@ -425,11 +427,11 @@ def find_closing_caret(ptemplate='', sposition =0, p_tag_type = 'TMPL_VAR', pmax
         if _test == '>':
             return _count
         if _count > _search_limit:
-            raise Exception("Failed to find the closing > after %s characters search for %s position %s " %
-                        (pmax_search, p_tag_type, sposition) ) 
+            raise Exception(html.escape("Failed to find the closing > after %s characters search for %s position %s " %
+                        (pmax_search, p_tag_type, sposition) )) 
         _count = _count + 1
     else:
-        raise Exception("Failed to find the closing > for  %s position %s "% (p_tag_type,sposition))
+        raise Exception(html.escape("Failed to find the closing > for  %s position %s "% (p_tag_type,sposition)))
 
 def find_closing_tag(ptemplate='', sposition =0, p_otage_type = '<TMPL_IF', p_ctag_type = '/TMPL_IF'):
     ##searchs a string finding the closeing /TMPL_if returning its starting position in the string 
@@ -446,7 +448,7 @@ def find_closing_tag(ptemplate='', sposition =0, p_otage_type = '<TMPL_IF', p_ct
                                             p_ctag_type),
                             )
     if _end_tag_count == 0:
-        e = "Cound not find the Closing tag for %s starting from position %s of the template: ptemplate" %(p_otage_type, sposition, ptemplate )
+        e = html.escape("Cound not find the Closing tag for %s starting from position %s of the template: %s ptemplate" %(p_otage_type, sposition, ptemplate ))
         raise Exception(e)
     _count = 0 
     _open_tag_position = 0
@@ -462,7 +464,7 @@ def find_closing_tag(ptemplate='', sposition =0, p_otage_type = '<TMPL_IF', p_ct
                             )
         _count = _count + 1
     
-    raise Exception("Closing Tag Mismatch for %s starting from position %s "%(p_otage_type, sposition))
+    raise Exception(html.escape("Closing Tag Mismatch for %s starting from position %s "%(p_otage_type, sposition)))
 
 def find_sibling_tag_position ( ptemplate='', sposition =0, p_otage_type = '<TMPL_IF', p_stag_type = ('TMPL_ELSE', 'TMPL_ELSEIF' )):
     #scan for the sibling tag in template
@@ -481,9 +483,10 @@ def find_sibling_tag_position ( ptemplate='', sposition =0, p_otage_type = '<TMP
                 return _len
             return _position
         else : # nested ifs jump to the end if end tag and rerun search 
-            _position = ptemplate.find('/TMPL_IF', _position)
+            _position = ptemplate.find('/TMPL_IF',_otag_pos)
+            #_position = ptemplate.find('/TMPL_IF', _position)
 
-def tag_attributes_extract(pstring='', pattribute='name' ):
+def tag_attributes_extract(pstring='', pattribute='name', ptempate_snip= '' ):
     _swhere = pstring.lower().find(pattribute.lower())
     _offset = len(pattribute)
     _rstring = ''
@@ -496,8 +499,8 @@ def tag_attributes_extract(pstring='', pattribute='name' ):
             _s = _cuts.find("'")+1
             return _cuts[_s: _cuts.find('"', _s)]
         else:
-            raise Exception(""" ' or " are not matching  in the attributes for tag :  %s"""
-                            % (pstring))
+            raise Exception(html.escape(""" ' or " are not matching  in the attributes for tag :  %s Template Snip %s"""
+                            % (pattribute, pstring)))
     return ''
 
 def tag_func_extract(pstring="function(list, of, args)" ):
@@ -506,7 +509,7 @@ def tag_func_extract(pstring="function(list, of, args)" ):
     _outer_par = _step.count(')')
     _child_funcs = None
     if _inner_par != _outer_par:  ## have syntax errors  
-        raise Exception("function tag has mismatched '(' ')' fix template") 
+        raise Exception(html.escape("function tag has mismatched '(' ')' fix template")) 
         
     if _inner_par > 1: #this has inner function to find and append as a child..
         _func_name, _func_args, _child_funcs = tag_func_extract(_step[_step.find('(')+1 : _step.rfind(')')])
@@ -521,13 +524,14 @@ def scan_tag(ptemplate= '', sposition=0):
     _pt.tag_sposition = sposition-1 # scan 
     cposition = 0
     test = ptemplate[sposition:sposition+8]
+   
     if ptemplate[sposition:sposition+8]== 'TMPL_VAR':
         _pt.tag_type = 'TMPL_VAR'
         _count = sposition + 8
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition + 9)
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_caret_close+1]
         _pt.tag_name = tag_attributes_extract(_pt.tag_raw)
-        _pt.tag_default = tag_attributes_extract(_pt.tag_raw, 'default')
+        _pt.tag_default = tag_attributes_extract(_pt.tag_raw, 'default' )
         _pt.tag_function = tag_attributes_extract(_pt.tag_raw, 'function')
         return _pt.tag_caret_close, _pt    
 
@@ -538,7 +542,7 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_default = tag_attributes_extract(_pt.tag_raw, 'default')
         _end_tag = find_closing_tag(ptemplate[sposition+9:], 0, p_otage_type='<TMPL_LOOP', p_ctag_type='/TMPL_LOOP' )
         if _end_tag is None:
-            raise Exception("LOOP is missing an /TMP_LOOP TAG.  TMPL_LOOP position is %s"% (_pt.tag_sposition))
+            raise Exception(html.escape("LOOP is missing an /TMP_LOOP TAG.  TMPL_LOOP position is %s"% (_pt.tag_sposition)))
         _pt.tag_eposition = _end_tag.tag_caret_close+sposition+10
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_eposition ]
         _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close: _pt.tag_eposition])
@@ -560,16 +564,16 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_name = tag_attributes_extract(_pt.tag_raw, 'name')
         return _pt.tag_caret_close, _pt
 
-    elif ptemplate[sposition:sposition+7] == 'TMPL_IF' or ptemplate[sposition:sposition+8] == 'TMPL_NIF'  :
+    elif ptemplate[sposition:sposition+7] == 'TMPL_IF'   :
         _pt.tag_type = 'TMPL_IF'
-        if ptemplate[sposition:sposition+8] == 'TMPL_IF':
-            _pt.tag_notlogic = True
+        _pt.tag_logicoperator = 'equal'
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+7, 'TMPL_IF')
         _pt.tag_name = tag_attributes_extract(ptemplate[sposition+7: _pt.tag_caret_close], 'name')
         _pt.tag_value = tag_attributes_extract(ptemplate[sposition+7: _pt.tag_caret_close], 'value')
         _end_tag = find_closing_tag(ptemplate[sposition+7:])
+        _pt.tag_logicoperator = logic_operation(ptemplate[sposition+7: _pt.tag_caret_close])
         if _end_tag is None:
-            raise Exception("TMP_IF is missing an /TMP_IF TAG.  TMPL_LOOP position is %s"% (_pt.tag_sposition))
+            raise Exception(html.escape("TMP_IF is missing an /TMP_IF TAG.  TMPL_LOOP position is %s"% (_pt.tag_sposition)))
         _pt.tag_eposition = _end_tag.tag_caret_close+sposition+8
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _pt.tag_eposition]
         _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close: _pt.tag_eposition-10])
@@ -578,14 +582,13 @@ def scan_tag(ptemplate= '', sposition=0):
         _pt.tag_else_position = find_sibling_tag_position(ptemplate[sposition + 8: _pt.tag_eposition], 0) + 8 + sposition
         return _pt.tag_eposition, _pt
 
-    elif ptemplate[sposition:sposition+11] == 'TMPL_ELSEIF' or ptemplate[sposition:sposition+12] == 'TMPL_NELSEIF': 
+    elif ptemplate[sposition:sposition+11] == 'TMPL_ELSEIF' : 
         _pt.tag_type = 'TMPL_ELSEIF'
-        if ptemplate[sposition:sposition+12] == 'TMPL_NELSEIF':
-            _pt.tag_notlogic = True
         _pt.tag_caret_close = find_closing_caret(ptemplate, sposition+11)
         _pt.tag_eposition = _pt.tag_caret_close+sposition+12
         _pt.tag_name = tag_attributes_extract(ptemplate[sposition+11: _pt.tag_caret_close], 'name')
         _pt.tag_value = tag_attributes_extract(ptemplate[sposition+11: _pt.tag_caret_close], 'value')
+        _pt.tag_logicoperator = logic_operation(ptemplate[sposition+7: _pt.tag_caret_close])
         _stagpos = find_sibling_tag_position(ptemplate, sposition+11)
         _pt.tag_raw = ptemplate[_pt.tag_sposition: _stagpos ]
         _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close+1: _stagpos ], 0 )
@@ -619,8 +622,22 @@ def scan_tag(ptemplate= '', sposition=0):
 
     else :
         _pt = None
-
+    
     return sposition, _pt
+
+def logic_operation(_psearch_string=''):
+    _logic_operators =[
+        'equal',
+        'greater',
+        'egreater',
+        'less',
+        'eless',
+        'notequal',
+    ]
+    for i in _logic_operators:
+        if _psearch_string.find(i) > 0:
+            return i
+    return 'equal'
 
 def function_process(pfunc_name = '', pargs='', pcontext= {}, pinner_funcs=None,
                     pdefault_text ='Function not Found in Context or is not a Built-In Function', 
@@ -648,7 +665,7 @@ def function_process(pfunc_name = '', pargs='', pcontext= {}, pinner_funcs=None,
     except Exception as e:
         if pdebug_mode:
             raise 
-        _return = str(e)
+        _return = html.escape(str(e))
     return _return 
  
 def tag_list():
