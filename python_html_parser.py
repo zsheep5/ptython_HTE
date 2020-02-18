@@ -5,7 +5,7 @@ return type file or stinrg
 """
 
 from pickle import dumps, loads
-from memcache import Client
+#from memcache import Client
 from datetime import datetime as dt 
 from datetime import timedelta as td
 import os 
@@ -234,17 +234,12 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                 _return = _return.replace(itag.tag_raw, function_process(itag.tag_function, itag.tag_name, pcontext, itag.tag_default ), 1)
         elif itag.tag_type == 'TMPL_IF':
             _start =  _return.find(itag.tag_raw)
-            #_end = _return.find(find_child_tag('/TMPL_IF', None, itag.tag_children).tag_raw)+8
+            _break_or_continue = None
             _context_value = get_context_value(pcontext, itag.tag_name, itag.tag_default, pmisstag_text )
             _compare = get_context_value(pcontext, itag.tag_value, itag.tag_value,'' )
             if logic_test(_context_value, _compare, itag.tag_logicoperator) :  ## process what is below or show text below this
                 itag.tag_children = set_elseif_to_skip(itag.tag_children)
                 _to_pass = ptemplate[itag.tag_caret_close+1: itag.tag_eposition ]
-            else:
-                itag.tag_children = set_if_children_to_skip(itag.tag_children) #need to process any elseif or else but do not process the template tags in the top if
-                itag.tag_processed_string = ''
-                _to_pass = ptemplate[itag.tag_else_position-1: itag.tag_eposition]
-            if len(itag.tag_children)>0:  #have children need to processed them as the related else and if on nested in this
                 itag.tag_processed_string, _break_or_continue  = process_tag_tree( pcontext, 
                                                                     itag.tag_children,
                                                                     _to_pass,
@@ -252,9 +247,24 @@ def process_tag_tree(pcontext={}, ptag_tree=[], ptemplate= '',
                                                                     pmisstag_text, 
                                                                     (pbranch_count +1), 
                                                                     pbranch_limit)
+            elif itag.tag_else_position == -1 :
+                    _return = _return.replace(itag.tag_raw, '',1)
+            else:
+                #itag.tag_children = set_if_children_to_skip(itag.tag_children) #need to process any elseif or else but do not process the template tags in the top if
+                itag.tag_processed_string = ''
+                #_to_pass = ptemplate[itag.tag_else_position-1: itag.tag_eposition]
+                _to_pass = itag.tag_raw[itag.tag_else_position-1: itag.tag_eposition]
+                if len(itag.tag_children)>0:  #have children need to processed them as the related else and if on nested in this
+                    itag.tag_processed_string, _break_or_continue  = process_tag_tree( pcontext, 
+                                                                itag.tag_children,
+                                                                _to_pass,
+                                                                #ptemplate[itag.tag_caret_close+1: itag.tag_eposition],  
+                                                                pmisstag_text, 
+                                                                (pbranch_count +1), 
+                                                                pbranch_limit)
                 _return = _return.replace(itag.tag_raw, itag.tag_processed_string,1)
-                if _break_or_continue is not None:  #hit a break event so exit this loop go back to calling function... 
-                    return _return, _break_or_continue
+            if _break_or_continue is not None:  #hit a break event so exit this loop go back to calling function... 
+                return _return, _break_or_continue
             else: ##no childrened processed should have processed at least the /TMP_IF tag  this should never be executed
                 _return = _return.replace(itag.tag_raw, itag.tag_processed_string,1)
         elif itag.tag_type == 'TMPL_ELSE' :
@@ -347,9 +357,10 @@ def set_elseif_to_skip( ptag_tree=[] ):
     return ptag_tree
 
 def set_if_children_to_skip( ptag_tree=[] ):
-    for itag in ptag_tree:
-        if itag.tag_type in ('TMPL_VAR', 'TMPL_LOOP', 'TMPL_FUNCTION', 'TMPL_IF' ):
-           itag.tag_skip = True
+    _count = 0
+    for _it in ptag_tree:
+        if _it.tag_type in ('TMPL_VAR', 'TMPL_LOOP', 'TMPL_FUNCTION', 'TMPL_IF' ):
+            _it.tag_skip = True
     return ptag_tree
 
 def find_child_tag (ptag_type = ('TMPL_ELSE', 'TMPL_ELSEIF' ), pname = None, pchildren=[]):
@@ -482,6 +493,24 @@ def find_sibling_tag_position ( ptemplate='', sposition =0, p_otage_type = '<TMP
             if _position ==-1:
                 return _len
             return _position
+            #return -1
+        else : # nested ifs jump to the end if end tag and rerun search 
+            _position = ptemplate.find('/TMPL_IF',_otag_pos)
+            #_position = ptemplate.find('/TMPL_IF', _position)
+
+def find_else_tag_position ( ptemplate='', sposition =0, p_otage_type = '<TMPL_IF', p_stag_type = ('TMPL_ELSE', 'TMPL_ELSEIF' )):
+    #scan for the sibling tag in template
+    _closingif = ptemplate.count('/TMPL_IF')
+    _len = len(ptemplate)
+    _position = sposition
+    while _position < _len :
+        _otag_pos = ptemplate.find('<TMPL_IF', _position)
+        _stag_else = ptemplate.find('<TMPL_ELSE', _position)
+        
+        if _otag_pos == -1 and _stag_else > 1 : # we do not have nested ifs to sort through to find our sibling
+            return _stag_else
+        elif _otag_pos == -1 and _stag_else == -1:
+            return -1
         else : # nested ifs jump to the end if end tag and rerun search 
             _position = ptemplate.find('/TMPL_IF',_otag_pos)
             #_position = ptemplate.find('/TMPL_IF', _position)
@@ -579,7 +608,7 @@ def scan_tag(ptemplate= '', sposition=0):
         _cposition, _pt.tag_children = parse_template(ptemplate[_pt.tag_caret_close: _pt.tag_eposition-10])
         _end_tag.tag_raw = '</TMPL_IF>' 
         _pt.tag_children.append(_end_tag)
-        _pt.tag_else_position = find_sibling_tag_position(ptemplate[sposition + 8: _pt.tag_eposition], 0) + 8 + sposition
+        _pt.tag_else_position = find_else_tag_position(ptemplate[sposition + 8: _pt.tag_eposition], 0) #+ 8 + sposition
         return _pt.tag_eposition, _pt
 
     elif ptemplate[sposition:sposition+11] == 'TMPL_ELSEIF' : 
