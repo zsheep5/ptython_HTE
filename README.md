@@ -21,7 +21,7 @@ The one file, python_html_parser.py supports the following Template Tags
 
 'TMPL_LOOPCOUNT' =  automatically created variable  to track current number the loop is on starts at 0
 
-'TMPL_IF' = same a python if statement
+'TMPL_IF' = same as python if statement operator syntax is equal, greater, egreater, less, eless and notequal
 
 'TMPL_ELSIF' =  same as python elsif statement
 
@@ -41,6 +41,6 @@ The template engine is written in function style,  meaning all the functions ca
 
 Test and use samples can be found at bottom of the python_HTML_parser.py
 
-Performance of the engine is on par with Jinjia2 using simple test cases and  loops with a million entries,  more performance can be gained by changing the dictionary access from dic.get() to dic[''] as this is twice as fast.  Only problem is design goal was return more readable error messages and not throw exceptions.  The change is minor but requires add Try Except Catches in the code.  It was done a few key places such as get_context_value() and function_process()
+Performance of the engine is on par with Jinjia2 using simple test cases and  loops with a million entries,  more performance can be gained by changing the dictionary access from dic.get() to dic[''] as this is twice as fast.  Only problem is design goal was return more readable error messages and not throw exceptions.  The change is minor but requires adding Try Except Catches in the code.  It was done in a few key places such as get_context_value() and function_process()
 
 The engine was complied with cthyon with no modification or type hinters,  this out performed Jinjia2 with simple test cases 
